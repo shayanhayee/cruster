@@ -50,7 +50,7 @@ cron = "0.13"
 tracing = { workspace = true }
 
 # Macros
-cruster-macros = { path = "../cruster-macros", version = "0.1.0" }
+cruster-macros = { path = "../cruster-macros", version = "0.0.1" }
 
 # SQL storage (optional)
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "tls-rustls", "migrate", "chrono"], optional = true }

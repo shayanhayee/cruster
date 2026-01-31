@@ -1,0 +1,37 @@
+//! Entity definitions for cluster tests.
+//!
+//! ## Entities
+//!
+//! - `Counter` - Basic state persistence and simple RPCs
+//! - `KVStore` - Key-value operations
+//! - `WorkflowTest` - Durable workflow testing
+//! - `ActivityTest` - Activity journaling
+//! - `TraitTest` - Entity trait composition
+//! - `TimerTest` - Timer/scheduling
+//! - `CrossEntity` - Entity-to-entity calls
+//! - `SingletonTest` - Singleton entity behavior
+
+pub mod activity_test;
+pub mod counter;
+pub mod cross_entity;
+pub mod kv_store;
+pub mod singleton_test;
+pub mod timer_test;
+pub mod trait_test;
+pub mod workflow_test;
+
+pub use activity_test::{
+    ActivityRecord, ActivityTest, ActivityTestClient, RunWithActivitiesRequest,
+};
+pub use counter::{Counter, CounterClient, DecrementRequest, IncrementRequest};
+pub use cross_entity::{CrossEntity, CrossEntityClient, Message, PingRequest, ReceiveRequest};
+pub use kv_store::{DeleteRequest, GetRequest, KVStore, KVStoreClient, SetRequest};
+pub use singleton_test::{LeaderRecord, SingletonManager};
+pub use timer_test::{
+    CancelTimerRequest, PendingTimer, ScheduleTimerRequest, TimerFire, TimerTest, TimerTestClient,
+};
+pub use trait_test::{AuditEntry, Auditable, TraitTest, TraitTestClient, UpdateRequest, Versioned};
+pub use workflow_test::{
+    GetExecutionRequest, RunFailingWorkflowRequest, RunLongWorkflowRequest,
+    RunSimpleWorkflowRequest, WorkflowExecution, WorkflowTest, WorkflowTestClient,
+};

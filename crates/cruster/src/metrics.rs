@@ -1,0 +1,85 @@
+use prometheus::{IntGauge, Opts, Registry};
+
+/// Cluster-level prometheus metrics.
+pub struct ClusterMetrics {
+    /// Number of active entity instances.
+    pub entities: IntGauge,
+    /// Number of registered singletons.
+    pub singletons: IntGauge,
+    /// Number of known runners.
+    pub runners: IntGauge,
+    /// Number of healthy runners.
+    pub runners_healthy: IntGauge,
+    /// Number of shards owned by this runner.
+    pub shards: IntGauge,
+}
+
+impl ClusterMetrics {
+    /// Create metrics and register them with the given prometheus registry.
+    pub fn new(registry: &Registry) -> Result<Self, prometheus::Error> {
+        let entities = IntGauge::with_opts(Opts::new(
+            "cluster_entities",
+            "Number of active entity instances",
+        ))?;
+        let singletons = IntGauge::with_opts(Opts::new(
+            "cluster_singletons",
+            "Number of registered singletons",
+        ))?;
+        let runners = IntGauge::with_opts(Opts::new("cluster_runners", "Number of known runners"))?;
+        let runners_healthy = IntGauge::with_opts(Opts::new(
+            "cluster_runners_healthy",
+            "Number of healthy runners",
+        ))?;
+        let shards = IntGauge::with_opts(Opts::new(
+            "cluster_shards",
+            "Number of shards owned by this runner",
+        ))?;
+
+        registry.register(Box::new(entities.clone()))?;
+        registry.register(Box::new(singletons.clone()))?;
+        registry.register(Box::new(runners.clone()))?;
+        registry.register(Box::new(runners_healthy.clone()))?;
+        registry.register(Box::new(shards.clone()))?;
+
+        Ok(Self {
+            entities,
+            singletons,
+            runners,
+            runners_healthy,
+            shards,
+        })
+    }
+
+    /// Create metrics without registering (for testing).
+    pub fn unregistered() -> Self {
+        Self {
+            entities: IntGauge::new("cluster_entities", "entities").expect("valid metric name"),
+            singletons: IntGauge::new("cluster_singletons", "singletons")
+                .expect("valid metric name"),
+            runners: IntGauge::new("cluster_runners", "runners").expect("valid metric name"),
+            runners_healthy: IntGauge::new("cluster_runners_healthy", "healthy")
+                .expect("valid metric name"),
+            shards: IntGauge::new("cluster_shards", "shards").expect("valid metric name"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unregistered_metrics_work() {
+        let m = ClusterMetrics::unregistered();
+        m.entities.set(5);
+        assert_eq!(m.entities.get(), 5);
+    }
+
+    #[test]
+    fn registered_metrics_work() {
+        let r = Registry::new();
+        let m = ClusterMetrics::new(&r).unwrap();
+        m.shards.set(10);
+        assert_eq!(m.shards.get(), 10);
+    }
+}

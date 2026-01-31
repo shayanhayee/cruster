@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 |------------|---------|-----------|-----------|---------------|
 | `#[rpc]` | Read-only operations | `&self` | No | External clients |
 | `#[activity]` | State mutations | `&mut self` | Yes | Workflows, other activities |
-| `#[workflow]` | Orchestrate activities | `&self` or `&mut self` | Yes | External clients |
+| `#[workflow]` | Orchestrate activities | `&self` | Yes | External clients |
 | `#[method]` | Read-only helpers | `&self` | No | Internal only |
 
 ### Visibility Modifiers

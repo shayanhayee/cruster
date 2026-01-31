@@ -9,7 +9,7 @@ A Rust framework for building distributed, stateful entity systems with durable 
 - **Entity Traits**: Composable behaviors that can be mixed into entities
 - **Activity Pattern**: Safe state mutations with transactional guarantees
 - **gRPC Transport**: Built-in cluster communication
-- **Storage Backends**: PostgreSQL, etcd, or in-memory storage
+- **Storage**: PostgreSQL for persistence, etcd for cluster formation & health monitoring
 
 ## Quick Start
 

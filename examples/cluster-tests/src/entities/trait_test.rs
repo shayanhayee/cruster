@@ -79,15 +79,6 @@ impl Auditable {
     pub async fn get_audit_log(&self) -> Result<Vec<AuditEntry>, ClusterError> {
         Ok(self.state.entries.clone())
     }
-
-    /// Clear the audit log.
-    #[allow(dead_code)]
-    #[activity]
-    #[protected]
-    pub async fn clear_audit_log(&mut self) -> Result<(), ClusterError> {
-        self.state.entries.clear();
-        Ok(())
-    }
 }
 
 // ================== Versioned Trait ==================

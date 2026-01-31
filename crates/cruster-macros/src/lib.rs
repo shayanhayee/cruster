@@ -924,8 +924,6 @@ struct RpcMethod {
     params: Vec<RpcParam>,
     response_type: syn::Type,
     is_mut: bool,
-    #[allow(dead_code)]
-    is_async: bool,
     kind: RpcKind,
     visibility: RpcVisibility,
     /// Optional idempotency key closure for workflows/activities.
@@ -4530,8 +4528,6 @@ fn parse_rpc_method(method: &syn::ImplItemFn) -> syn::Result<Option<RpcMethod>> 
         ));
     }
 
-    let is_async = method.sig.asyncness.is_some();
-
     // #[method] can have any return type; others must return Result<T, ClusterError>
     let response_type = match &method.sig.output {
         syn::ReturnType::Type(_, ty) => {
@@ -4561,7 +4557,6 @@ fn parse_rpc_method(method: &syn::ImplItemFn) -> syn::Result<Option<RpcMethod>> 
         params,
         response_type,
         is_mut,
-        is_async,
         kind,
         visibility,
         persist_key,

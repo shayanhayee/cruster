@@ -323,11 +323,11 @@ sharding.start().await?;
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `shard_count` | 128 | Number of shards per group |
-| `max_idle_time` | 60s | Entity eviction timeout |
-| `mailbox_capacity` | 1000 | Per-entity message queue size |
-| `storage_poll_interval` | 100ms | Message storage polling frequency |
-| `storage_message_max_retries` | 3 | Max delivery attempts before dead-letter |
+| `shards_per_group` | 2048 | Number of shards per shard group |
+| `entity_max_idle_time` | 60s | Entity eviction timeout |
+| `entity_mailbox_capacity` | 100 | Per-entity message queue size |
+| `storage_poll_interval` | 500ms | Message storage polling frequency |
+| `storage_message_max_retries` | 10 | Max delivery attempts before dead-letter |
 
 ## Storage
 

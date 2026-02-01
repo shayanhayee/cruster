@@ -212,7 +212,7 @@ impl Default for ShardingConfig {
             runner_listen_address: None,
             runner_weight: 1,
             shard_groups: vec!["default".to_string()],
-            shards_per_group: 300,
+            shards_per_group: 2048,
             runner_lock_ttl: Duration::from_secs(30),
             runner_lock_refresh_interval: Duration::from_secs(10),
             entity_max_idle_time: Duration::from_secs(60),

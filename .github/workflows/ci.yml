@@ -13,8 +13,9 @@ env:
   RUSTC_WRAPPER: sccache
 
 jobs:
-  build:
-    name: Build
+  # Main CI job - runs all checks in sequence to maximize cache reuse
+  ci:
+    name: CI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,12 +27,30 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
+          components: clippy, rustfmt
+      
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      
       - name: Build
         run: cargo build --release --all-features --locked
+      
+      - name: Clippy
+        run: cargo clippy --release --all-targets --all-features --locked -- -D warnings
+      
+      - name: Test
+        run: cargo test --release --all-features --locked
+      
+      - name: Documentation
+        run: cargo doc --no-deps --all-features --locked
+        env:
+          RUSTDOCFLAGS: -Dwarnings
       
       - name: Upload cluster-tests binary
         uses: actions/upload-artifact@v4
@@ -40,90 +59,10 @@ jobs:
           path: target/release/cluster-tests
           retention-days: 1
 
-  clippy:
-    name: Clippy
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler mold clang
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.93"
-          components: clippy
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      
-      - name: Run clippy
-        run: cargo clippy --release --all-targets --all-features --locked -- -D warnings
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.93"
-          components: rustfmt
-      
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  test:
-    name: Test
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler mold clang
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.93"
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      
-      - name: Run tests
-        run: cargo test --release --all-features --locked
-
-  doc:
-    name: Documentation
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler mold clang
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.93"
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      
-      - name: Check documentation
-        run: cargo doc --no-deps --all-features --locked
-        env:
-          RUSTDOCFLAGS: -Dwarnings
-
+  # E2E tests run separately (need Docker)
   e2e:
     name: E2E Tests
-    needs: build
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -160,31 +99,10 @@ jobs:
         working-directory: examples/cluster-tests
         run: docker compose down -v
 
-  # Ensure all jobs pass before merging
-  ci-success:
-    name: CI Success
-    needs: [build, clippy, fmt, test, doc, e2e]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Check all jobs passed
-        run: |
-          if [[ "${{ needs.build.result }}" != "success" ]] || \
-             [[ "${{ needs.clippy.result }}" != "success" ]] || \
-             [[ "${{ needs.fmt.result }}" != "success" ]] || \
-             [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.doc.result }}" != "success" ]] || \
-             [[ "${{ needs.e2e.result }}" != "success" ]]; then
-            echo "One or more jobs failed"
-            exit 1
-          fi
-          echo "All jobs passed"
-
   # Create/update release PR when changesets are present
   prepare-release:
     name: Prepare Release
-    needs: ci-success
-    # Run on push to main, but NOT when the release PR itself is merged
+    needs: [ci, e2e]
     if: |
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
@@ -217,8 +135,7 @@ jobs:
   # Publish to crates.io when release PR is merged
   publish:
     name: Publish to crates.io
-    needs: ci-success
-    # Only run when the release PR is merged (commit message from knope)
+    needs: [ci, e2e]
     if: |
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
@@ -233,20 +150,20 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+      
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       
-      # Publish cruster-macros first (dependency of cruster)
       - name: Publish cruster-macros
         run: cargo publish -p cruster-macros --all-features
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       
-      # Wait for crates.io to index the new version
       - name: Wait for crates.io indexing
         run: sleep 30
       
-      # Then publish cruster
       - name: Publish cruster
         run: cargo publish -p cruster --all-features
         env:

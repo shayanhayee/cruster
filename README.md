@@ -170,13 +170,14 @@ impl MyEntity {
     #[public]
     pub async fn query(&self) -> Result<Data, ClusterError> { ... }
 
-    // Protected: callable by other entities and traits, not external clients
+    // Protected: visible in the current trait and all entities that implement it
     #[activity]
     #[protected]
     pub async fn internal_update(&mut self, data: Data) -> Result<(), ClusterError> { ... }
 
     // Private: only callable within this entity (default for #[activity])
     #[activity]
+    #[private]
     async fn do_mutation(&mut self) -> Result<(), ClusterError> { ... }
 }
 ```

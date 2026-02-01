@@ -88,20 +88,23 @@ impl Counter {
 
 ```rust
 use cruster::testing::TestCluster;
+use cruster::types::EntityId;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create test cluster
     let cluster = TestCluster::new().await;
     
-    // Register entity and get typed client
-    let counter = cluster.register(Counter).await?;
+    // Register entity - the macro generates CounterClient
+    Counter.register(cluster.sharding()).await?;
+    let counter = CounterClient::new(cluster.sharding().clone());
     
-    // Call methods - entity is created on first access
-    let value: i64 = counter.send("counter-1", "increment", &5i64).await?;
+    // Call methods using the typed client - entity is created on first access
+    let entity_id = EntityId::new("counter-1");
+    let value = counter.increment(&entity_id, &5i64).await?;
     assert_eq!(value, 5);
     
-    let value: i64 = counter.send("counter-1", "get", &()).await?;
+    let value = counter.get(&entity_id).await?;
     assert_eq!(value, 5);
     
     Ok(())
@@ -333,6 +336,7 @@ register_singleton(&*sharding, "leader-election", || async {
 
 ```rust
 use cruster::testing::TestCluster;
+use cruster::types::EntityId;
 
 #[tokio::test]
 async fn test_counter_increment() {
@@ -342,12 +346,15 @@ async fn test_counter_increment() {
     // Or with workflow support (durable context)
     let cluster = TestCluster::with_workflow_support().await;
     
-    let counter = cluster.register(Counter).await.unwrap();
+    // Register entity and create typed client
+    Counter.register(cluster.sharding()).await.unwrap();
+    let counter = CounterClient::new(cluster.sharding().clone());
     
-    let result: i64 = counter.send("test-1", "increment", &10i64).await.unwrap();
+    let entity_id = EntityId::new("test-1");
+    let result = counter.increment(&entity_id, &10i64).await.unwrap();
     assert_eq!(result, 10);
     
-    let result: i64 = counter.send("test-1", "get", &()).await.unwrap();
+    let result = counter.get(&entity_id).await.unwrap();
     assert_eq!(result, 10);
 }
 ```
@@ -452,4 +459,4 @@ See [`examples/`](examples/) for complete examples:
 
 ## License
 
-MIT OR Apache-2.0
+MIT

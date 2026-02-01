@@ -40,6 +40,7 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,6 +77,7 @@ jobs:
 
   test:
     name: Test
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -96,6 +98,7 @@ jobs:
 
   doc:
     name: Documentation
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

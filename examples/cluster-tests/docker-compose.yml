@@ -38,11 +38,9 @@ services:
       timeout: 5s
       retries: 10
 
-  # Cluster node 1
+  # Cluster nodes use prebuilt image (built by CI or `docker build --target ci`)
   node1:
-    build:
-      context: ../..
-      dockerfile: examples/cluster-tests/Dockerfile
+    image: cluster-tests:latest
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379
@@ -61,11 +59,8 @@ services:
       timeout: 10s
       retries: 12
 
-  # Cluster node 2
   node2:
-    build:
-      context: ../..
-      dockerfile: examples/cluster-tests/Dockerfile
+    image: cluster-tests:latest
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379
@@ -86,11 +81,8 @@ services:
       timeout: 10s
       retries: 12
 
-  # Cluster node 3
   node3:
-    build:
-      context: ../..
-      dockerfile: examples/cluster-tests/Dockerfile
+    image: cluster-tests:latest
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379
@@ -111,7 +103,6 @@ services:
       timeout: 10s
       retries: 12
 
-  # Nginx load balancer to distribute requests across nodes
   nginx:
     image: nginx:alpine
     ports:
@@ -131,11 +122,8 @@ services:
       timeout: 10s
       retries: 12
 
-  # E2E test runner - runs the bash test scripts
   e2e-tests:
-    build:
-      context: ../..
-      dockerfile: examples/cluster-tests/Dockerfile.e2e
+    image: e2e-tests:latest
     environment:
       CLUSTER_TESTS_URL: http://nginx:80
     depends_on:

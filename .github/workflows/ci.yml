@@ -27,6 +27,8 @@ jobs:
       
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-build
       
       - name: Build release binary
         run: cargo build --release --all-features --locked
@@ -56,6 +58,9 @@ jobs:
       
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-build
+          save-if: false
       
       - name: Run clippy
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
@@ -92,6 +97,9 @@ jobs:
       
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-build
+          save-if: false
       
       - name: Run tests
         run: cargo test --all-features --locked
@@ -113,6 +121,9 @@ jobs:
       
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-build
+          save-if: false
       
       - name: Check documentation
         run: cargo doc --no-deps --all-features --locked
@@ -233,6 +244,9 @@ jobs:
       
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-build
+          save-if: false
       
       # Publish cruster-macros first (dependency of cruster)
       - name: Publish cruster-macros

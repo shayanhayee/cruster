@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  SCCACHE_GHA_ENABLED: true
+  RUSTC_WRAPPER: sccache
 
 jobs:
   build:
@@ -25,15 +27,11 @@ jobs:
         with:
           toolchain: "1.93"
       
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: rust-build
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       
       - name: Build
-        run: |
-          cargo build --release --all-features --locked
-          cargo test --release --all-features --locked --no-run
+        run: cargo build --release --all-features --locked
       
       - name: Upload cluster-tests binary
         uses: actions/upload-artifact@v4
@@ -58,11 +56,8 @@ jobs:
           toolchain: "1.93"
           components: clippy
       
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: rust-build
-          save-if: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       
       - name: Run clippy
         run: cargo clippy --release --all-targets --all-features --locked -- -D warnings
@@ -97,11 +92,8 @@ jobs:
         with:
           toolchain: "1.93"
       
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: rust-build
-          save-if: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       
       - name: Run tests
         run: cargo test --release --all-features --locked
@@ -121,11 +113,8 @@ jobs:
         with:
           toolchain: "1.93"
       
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: rust-build
-          save-if: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       
       - name: Check documentation
         run: cargo doc --no-deps --all-features --locked
@@ -244,11 +233,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: rust-build
-          save-if: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       
       # Publish cruster-macros first (dependency of cruster)
       - name: Publish cruster-macros

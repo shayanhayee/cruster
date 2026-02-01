@@ -249,7 +249,7 @@ mod tests {
         let config = ShardingConfig::default();
         assert_eq!(config.runner_weight, 1);
         assert_eq!(config.shard_groups, vec!["default".to_string()]);
-        assert_eq!(config.shards_per_group, 300);
+        assert_eq!(config.shards_per_group, 2048);
         assert_eq!(config.runner_lock_ttl, Duration::from_secs(30));
         assert_eq!(config.entity_max_idle_time, Duration::from_secs(60));
         assert_eq!(config.entity_mailbox_capacity, 100);

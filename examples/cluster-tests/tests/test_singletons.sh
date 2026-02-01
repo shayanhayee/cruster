@@ -5,79 +5,64 @@ source "$(dirname "$0")/lib/helpers.sh"
 test_start "Singleton Entities"
 
 # Reset state for clean testing
-post "/singleton/reset-sequence" "{}" > /dev/null
-post "/singleton/clear-history" "{}" > /dev/null
+post "/singleton/reset" "{}" > /dev/null
 test_pass "reset singleton state"
 
-# Get sequence numbers (should be unique and increasing)
-SEQ1=$(post "/singleton/next-sequence" "{}")
-SEQ2=$(post "/singleton/next-sequence" "{}")
-SEQ3=$(post "/singleton/next-sequence" "{}")
+# Wait for singleton to start and tick at least once
+# The singleton ticks every 1 second, so 3 seconds gives it time to initialize and tick
+sleep 3
 
-# Verify uniqueness
-if [ "$SEQ1" -eq "$SEQ2" ] || [ "$SEQ2" -eq "$SEQ3" ] || [ "$SEQ1" -eq "$SEQ3" ]; then
-    test_fail "sequence numbers not unique: $SEQ1, $SEQ2, $SEQ3"
+# Get tick count
+TICK1=$(get "/singleton/tick-count")
+if [ "$TICK1" -lt 1 ]; then
+    test_fail "tick count should be >= 1, got: $TICK1"
 fi
-test_pass "sequence numbers unique"
+test_pass "singleton is ticking"
 
-# Verify ordering (each should be greater than the previous)
-if [ "$SEQ2" -le "$SEQ1" ] || [ "$SEQ3" -le "$SEQ2" ]; then
-    test_fail "sequence numbers not increasing: $SEQ1, $SEQ2, $SEQ3"
+# Wait and check tick count increases
+sleep 2
+TICK2=$(get "/singleton/tick-count")
+if [ "$TICK2" -le "$TICK1" ]; then
+    test_fail "tick count should increase: was $TICK1, now $TICK2"
 fi
-test_pass "sequence numbers increasing"
+test_pass "tick count increases over time"
 
-# Verify they started from 1 (after reset)
-if [ "$SEQ1" -ne "1" ]; then
-    test_fail "first sequence after reset should be 1, got: $SEQ1"
-fi
-test_pass "sequence starts at 1 after reset"
-
-# Get many sequence numbers quickly to test atomicity
-for i in $(seq 1 10); do
-    post "/singleton/next-sequence" "{}" > /dev/null
-done
-SEQ_AFTER=$(post "/singleton/next-sequence" "{}")
-EXPECTED=$((3 + 10 + 1))  # 3 from before + 10 in loop + 1 final
-if [ "$SEQ_AFTER" -ne "$EXPECTED" ]; then
-    test_fail "sequence counter mismatch: expected $EXPECTED, got $SEQ_AFTER"
-fi
-test_pass "rapid sequence generation works correctly"
-
-# Check current runner
+# Check current runner is set
 RUNNER=$(get "/singleton/current-runner")
-if [ -z "$RUNNER" ] || [ "$RUNNER" = "null" ] || [ "$RUNNER" = "\"\"" ]; then
-    test_fail "no runner reported: got '$RUNNER'"
+# Remove quotes from JSON string
+RUNNER=$(echo "$RUNNER" | tr -d '"')
+if [ -z "$RUNNER" ]; then
+    test_fail "no runner reported"
 fi
-test_pass "singleton has runner"
+test_pass "singleton has runner: $RUNNER"
 
-# Record a leadership change
-post "/singleton/record-leadership" "{\"runner_id\": \"test-runner-1\"}" > /dev/null
-test_pass "recorded leadership change"
-
-# Check leadership history
-HISTORY=$(get "/singleton/leader-history")
-assert_contains "$HISTORY" "test-runner-1"
-test_pass "leadership history contains recorded change"
-
-# Record another leadership change
-post "/singleton/record-leadership" "{\"runner_id\": \"test-runner-2\"}" > /dev/null
-HISTORY=$(get "/singleton/leader-history")
-assert_contains "$HISTORY" "test-runner-1"
-assert_contains "$HISTORY" "test-runner-2"
-test_pass "leadership history accumulates"
-
-# Clear history
-post "/singleton/clear-history" "{}" > /dev/null
-HISTORY=$(get "/singleton/leader-history")
-assert_eq "$HISTORY" "[]"
-test_pass "clear history works"
-
-# Test reset sequence
-post "/singleton/reset-sequence" "{}" > /dev/null
-SEQ=$(post "/singleton/next-sequence" "{}")
-if [ "$SEQ" -ne "1" ]; then
-    test_fail "sequence should be 1 after reset, got: $SEQ"
+# Get full state
+STATE=$(get "/singleton/state")
+if [ "$STATE" = "null" ]; then
+    test_fail "singleton state is null"
 fi
-test_pass "reset sequence works"
+test_pass "singleton state available"
+
+# Verify state contains expected fields
+if ! echo "$STATE" | grep -q "runner_id"; then
+    test_fail "state missing runner_id"
+fi
+if ! echo "$STATE" | grep -q "tick_count"; then
+    test_fail "state missing tick_count"
+fi
+if ! echo "$STATE" | grep -q "last_tick_at"; then
+    test_fail "state missing last_tick_at"
+fi
+test_pass "singleton state has all fields"
+
+# Test reset
+post "/singleton/reset" "{}" > /dev/null
+sleep 2  # Wait for singleton to restart
+TICK_AFTER_RESET=$(get "/singleton/tick-count")
+# After reset, singleton restarts with tick_count=0, then ticks
+if [ "$TICK_AFTER_RESET" -ge "$TICK2" ]; then
+    test_fail "tick count should reset: was $TICK2, after reset $TICK_AFTER_RESET"
+fi
+test_pass "reset clears tick count"
 
 echo "All singleton tests passed"

@@ -1804,38 +1804,18 @@ impl Sharding for ShardingImpl {
                     Err(e) => return Err(e),
                 }
             } else if let Some(owner) = self.get_shard_owner_async(&shard_id).await {
-                // Remote delivery via the Runners transport
-                if envelope.persisted {
-                    let request_id = envelope.request_id;
-                    match self
-                        .runners
-                        .notify(&owner, Envelope::Request(envelope.clone()))
-                        .await
-                    {
-                        Ok(()) => {
-                            let (tx, rx) = mpsc::channel(16);
-                            if let Some(ref storage) = self.message_storage {
-                                storage.register_reply_handler(request_id, tx);
-                            }
-                            return Ok(rx);
-                        }
-                        Err(e) if Self::is_retryable(&e) && !is_last => {
-                            tracing::debug!(attempt, error = %e, "send: retryable error on remote persisted, will retry");
-                            last_err = Some(e);
-                            continue;
-                        }
-                        Err(e) => return Err(e),
+                // Remote delivery via the Runners transport.
+                // Both persisted and non-persisted messages use send() to get
+                // streaming replies. The remote node's GrpcRunnerServer::send()
+                // handler will process the message and stream replies back.
+                match self.runners.send(&owner, envelope.clone()).await {
+                    Ok(rx) => return Ok(rx),
+                    Err(e) if Self::is_retryable(&e) && !is_last => {
+                        tracing::debug!(attempt, error = %e, "send: retryable error on remote, will retry");
+                        last_err = Some(e);
+                        continue;
                     }
-                } else {
-                    match self.runners.send(&owner, envelope.clone()).await {
-                        Ok(rx) => return Ok(rx),
-                        Err(e) if Self::is_retryable(&e) && !is_last => {
-                            tracing::debug!(attempt, error = %e, "send: retryable error on remote, will retry");
-                            last_err = Some(e);
-                            continue;
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    Err(e) => return Err(e),
                 }
             } else {
                 // No runner assigned for this shard

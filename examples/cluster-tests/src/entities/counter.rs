@@ -27,7 +27,7 @@ pub struct CounterState {
 /// - `decrement(amount)` - Subtract from counter, return new value
 /// - `get()` - Get current value
 /// - `reset()` - Reset to zero
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct Counter;
 

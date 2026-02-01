@@ -7,6 +7,10 @@ root: true
 
 Rust framework for distributed, stateful entity systems with durable workflows.
 
+## Reference Implementation
+
+The original Effect cluster code (TypeScript) can be found in `.repos/effect-smol/packages/effect/src/unstable/cluster`.
+
 ## Critical Constraints
 
 - **No auto-commits** - Wait for explicit user approval

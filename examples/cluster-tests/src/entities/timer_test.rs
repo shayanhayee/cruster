@@ -57,7 +57,7 @@ pub struct TimerTestState {
 /// - `cancel_timer(timer_id)` - Cancel a pending timer
 /// - `get_timer_fires()` - Get fired timer history
 /// - `clear_fires()` - Clear fire history
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct TimerTest;
 
@@ -75,6 +75,13 @@ pub struct ScheduleTimerRequest {
 pub struct CancelTimerRequest {
     /// Timer ID to cancel.
     pub timer_id: String,
+}
+
+/// Request to clear timer fires (includes unique ID for workflow deduplication).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClearFiresRequest {
+    /// Unique request ID to ensure each clear is a new workflow execution.
+    pub request_id: String,
 }
 
 #[entity_impl]
@@ -199,8 +206,11 @@ impl TimerTest {
     }
 
     /// Clear the timer fire history.
+    ///
+    /// Each call must have a unique `request_id` to ensure it executes as a new
+    /// workflow (not replayed from journal).
     #[workflow]
-    pub async fn clear_fires(&self) -> Result<(), ClusterError> {
+    pub async fn clear_fires(&self, _request: ClearFiresRequest) -> Result<(), ClusterError> {
         self.do_clear_fires().await
     }
 

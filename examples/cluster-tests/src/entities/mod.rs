@@ -24,11 +24,15 @@ pub use activity_test::{
     ActivityRecord, ActivityTest, ActivityTestClient, RunWithActivitiesRequest,
 };
 pub use counter::{Counter, CounterClient, DecrementRequest, IncrementRequest};
-pub use cross_entity::{CrossEntity, CrossEntityClient, Message, PingRequest, ReceiveRequest};
+pub use cross_entity::{
+    ClearMessagesRequest, CrossEntity, CrossEntityClient, Message, PingRequest, ReceiveRequest,
+    ResetPingCountRequest,
+};
 pub use kv_store::{DeleteRequest, GetRequest, KVStore, KVStoreClient, SetRequest};
-pub use singleton_test::{LeaderRecord, SingletonManager};
+pub use singleton_test::{SingletonManager, SingletonState};
 pub use timer_test::{
-    CancelTimerRequest, PendingTimer, ScheduleTimerRequest, TimerFire, TimerTest, TimerTestClient,
+    CancelTimerRequest, ClearFiresRequest, PendingTimer, ScheduleTimerRequest, TimerFire,
+    TimerTest, TimerTestClient,
 };
 pub use trait_test::{AuditEntry, Auditable, TraitTest, TraitTestClient, UpdateRequest, Versioned};
 pub use workflow_test::{

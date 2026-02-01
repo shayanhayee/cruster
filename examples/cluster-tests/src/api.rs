@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::entities::{
-    ActivityRecord, ActivityTestClient, AuditEntry, CancelTimerRequest, CounterClient,
-    CrossEntityClient, DecrementRequest, DeleteRequest, GetExecutionRequest, GetRequest,
-    IncrementRequest, KVStoreClient, LeaderRecord, Message, PendingTimer, PingRequest,
-    ReceiveRequest, RunFailingWorkflowRequest, RunLongWorkflowRequest, RunSimpleWorkflowRequest,
-    RunWithActivitiesRequest, ScheduleTimerRequest, SetRequest, SingletonManager, TimerFire,
-    TimerTestClient, TraitTestClient, UpdateRequest, WorkflowExecution, WorkflowTestClient,
+    ActivityRecord, ActivityTestClient, AuditEntry, CancelTimerRequest, ClearFiresRequest,
+    ClearMessagesRequest, CounterClient, CrossEntityClient, DecrementRequest, DeleteRequest,
+    GetExecutionRequest, GetRequest, IncrementRequest, KVStoreClient, Message,
+    PendingTimer, PingRequest, ReceiveRequest, ResetPingCountRequest, RunFailingWorkflowRequest,
+    RunLongWorkflowRequest, RunSimpleWorkflowRequest, RunWithActivitiesRequest,
+    ScheduleTimerRequest, SetRequest, SingletonManager, SingletonState, TimerFire, TimerTestClient,
+    TraitTestClient, UpdateRequest, WorkflowExecution, WorkflowTestClient,
 };
 // Import trait client extensions to make trait methods available on TraitTestClient
 use crate::entities::trait_test::{AuditableClientExt, VersionedClientExt};
@@ -64,51 +65,50 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Health check
         .route("/health", get(health_check))
         // Counter routes
-        .route("/counter/{id}", get(counter_get))
-        .route("/counter/{id}/increment", post(counter_increment))
-        .route("/counter/{id}/decrement", post(counter_decrement))
-        .route("/counter/{id}/reset", post(counter_reset))
+        .route("/counter/:id", get(counter_get))
+        .route("/counter/:id/increment", post(counter_increment))
+        .route("/counter/:id/decrement", post(counter_decrement))
+        .route("/counter/:id/reset", post(counter_reset))
         // KVStore routes
-        .route("/kv/{id}/set", post(kv_set))
-        .route("/kv/{id}/get/{key}", get(kv_get))
-        .route("/kv/{id}/delete/{key}", delete(kv_delete))
-        .route("/kv/{id}/keys", get(kv_list_keys))
-        .route("/kv/{id}/clear", post(kv_clear))
+        .route("/kv/:id/set", post(kv_set))
+        .route("/kv/:id/get/:key", get(kv_get))
+        .route("/kv/:id/delete/:key", delete(kv_delete))
+        .route("/kv/:id/keys", get(kv_list_keys))
+        .route("/kv/:id/clear", post(kv_clear))
         // WorkflowTest routes
-        .route("/workflow/{id}/run-simple", post(workflow_run_simple))
-        .route("/workflow/{id}/run-failing", post(workflow_run_failing))
-        .route("/workflow/{id}/run-long", post(workflow_run_long))
+        .route("/workflow/:id/run-simple", post(workflow_run_simple))
+        .route("/workflow/:id/run-failing", post(workflow_run_failing))
+        .route("/workflow/:id/run-long", post(workflow_run_long))
         .route(
-            "/workflow/{id}/execution/{exec_id}",
+            "/workflow/:id/execution/:exec_id",
             get(workflow_get_execution),
         )
-        .route("/workflow/{id}/executions", get(workflow_list_executions))
+        .route("/workflow/:id/executions", get(workflow_list_executions))
         // ActivityTest routes
-        .route("/activity/{id}/run", post(activity_run))
-        .route("/activity/{id}/log", get(activity_get_log))
+        .route("/activity/:id/run", post(activity_run))
+        .route("/activity/:id/log", get(activity_get_log))
         // TraitTest routes
-        .route("/trait/{id}", get(trait_get))
-        .route("/trait/{id}/update", post(trait_update))
-        .route("/trait/{id}/audit-log", get(trait_get_audit_log))
-        .route("/trait/{id}/version", get(trait_get_version))
+        .route("/trait/:id", get(trait_get))
+        .route("/trait/:id/update", post(trait_update))
+        .route("/trait/:id/audit-log", get(trait_get_audit_log))
+        .route("/trait/:id/version", get(trait_get_version))
         // TimerTest routes
-        .route("/timer/{id}/schedule", post(timer_schedule))
-        .route("/timer/{id}/cancel", post(timer_cancel))
-        .route("/timer/{id}/fires", get(timer_get_fires))
-        .route("/timer/{id}/clear-fires", post(timer_clear_fires))
-        .route("/timer/{id}/pending", get(timer_get_pending))
+        .route("/timer/:id/schedule", post(timer_schedule))
+        .route("/timer/:id/cancel", post(timer_cancel))
+        .route("/timer/:id/fires", get(timer_get_fires))
+        .route("/timer/:id/clear-fires", post(timer_clear_fires))
+        .route("/timer/:id/pending", get(timer_get_pending))
         // CrossEntity routes
-        .route("/cross/{id}/send", post(cross_send))
-        .route("/cross/{id}/receive", post(cross_receive))
-        .route("/cross/{id}/messages", get(cross_get_messages))
-        .route("/cross/{id}/clear", post(cross_clear_messages))
-        .route("/cross/{id}/ping-pong", post(cross_ping_pong))
+        .route("/cross/:id/send", post(cross_send))
+        .route("/cross/:id/receive", post(cross_receive))
+        .route("/cross/:id/messages", get(cross_get_messages))
+        .route("/cross/:id/clear", post(cross_clear_messages))
+        .route("/cross/:id/ping-pong", post(cross_ping_pong))
         // SingletonTest routes (uses cluster's register_singleton feature)
-        .route("/singleton/next-sequence", post(singleton_next_sequence))
-        .route("/singleton/leader-history", get(singleton_leader_history))
+        .route("/singleton/state", get(singleton_state))
+        .route("/singleton/tick-count", get(singleton_tick_count))
         .route("/singleton/current-runner", get(singleton_current_runner))
-        .route("/singleton/clear-history", post(singleton_clear_history))
-        .route("/singleton/reset-sequence", post(singleton_reset_sequence))
+        .route("/singleton/reset", post(singleton_reset))
         // Debug routes
         .route("/debug/shards", get(debug_shards))
         .route("/debug/entities", get(debug_entities))
@@ -138,11 +138,13 @@ async fn counter_increment(
     Path(id): Path<String>,
     Json(amount): Json<i64>,
 ) -> Result<Json<i64>, AppError> {
+    tracing::info!("counter_increment called: id={}, amount={}", id, amount);
     let entity_id = EntityId::new(&id);
     let value = state
         .counter_client
         .increment(&entity_id, &IncrementRequest { amount })
         .await?;
+    tracing::info!("counter_increment completed: id={}, value={}", id, value);
     Ok(Json(value))
 }
 
@@ -536,7 +538,12 @@ async fn timer_clear_fires(
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
     let entity_id = EntityId::new(&id);
-    state.timer_test_client.clear_fires(&entity_id).await?;
+    // Generate unique request ID so each clear is a new workflow execution
+    let request_id = format!("clear-{}-{}", id, chrono::Utc::now().timestamp_millis());
+    state
+        .timer_test_client
+        .clear_fires(&entity_id, &ClearFiresRequest { request_id })
+        .await?;
     Ok(Json(()))
 }
 
@@ -657,7 +664,12 @@ async fn cross_clear_messages(
     Path(id): Path<String>,
 ) -> Result<Json<()>, AppError> {
     let entity_id = EntityId::new(&id);
-    state.cross_entity_client.clear_messages(&entity_id).await?;
+    // Generate unique request ID so each clear is a new workflow execution
+    let request_id = format!("clear-{}-{}", id, chrono::Utc::now().timestamp_millis());
+    state
+        .cross_entity_client
+        .clear_messages(&entity_id, &ClearMessagesRequest { request_id })
+        .await?;
     Ok(Json(()))
 }
 
@@ -677,14 +689,25 @@ async fn cross_ping_pong(
     let entity_a_id = EntityId::new(&id);
     let entity_b_id = EntityId::new(&body.partner_id);
 
-    // Reset both entities' ping counts
+    // Reset both entities' ping counts (with unique request IDs)
+    let ts = chrono::Utc::now().timestamp_millis();
     state
         .cross_entity_client
-        .reset_ping_count(&entity_a_id)
+        .reset_ping_count(
+            &entity_a_id,
+            &ResetPingCountRequest {
+                request_id: format!("reset-{}-{}", id, ts),
+            },
+        )
         .await?;
     state
         .cross_entity_client
-        .reset_ping_count(&entity_b_id)
+        .reset_ping_count(
+            &entity_b_id,
+            &ResetPingCountRequest {
+                request_id: format!("reset-{}-{}", body.partner_id, ts),
+            },
+        )
         .await?;
 
     // Perform the ping-pong sequence
@@ -723,40 +746,34 @@ async fn cross_ping_pong(
 // SingletonTest handlers (uses cluster's register_singleton feature)
 // ============================================================================
 
-/// Get the next global sequence number.
-///
-/// This atomically increments and returns a unique sequence number.
-/// Sequence numbers are guaranteed to never duplicate cluster-wide.
-async fn singleton_next_sequence(State(state): State<Arc<AppState>>) -> Json<u64> {
-    Json(state.singleton_manager.get_next_sequence())
+/// Get the full singleton state from PostgreSQL.
+async fn singleton_state(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Option<SingletonState>>, AppError> {
+    let singleton_state = state.singleton_manager.get_state().await?;
+    Ok(Json(singleton_state))
 }
 
-/// Get the leadership change history.
+/// Get the current tick count.
 ///
-/// Shows which runners have hosted the singleton over time.
-async fn singleton_leader_history(State(state): State<Arc<AppState>>) -> Json<Vec<LeaderRecord>> {
-    Json(state.singleton_manager.get_leader_history())
+/// The singleton increments this counter every second.
+async fn singleton_tick_count(State(state): State<Arc<AppState>>) -> Result<Json<i64>, AppError> {
+    let count = state.singleton_manager.get_tick_count().await?;
+    Ok(Json(count))
 }
 
-/// Get the current runner ID.
-///
-/// Returns the runner that is currently hosting the singleton.
-async fn singleton_current_runner(State(state): State<Arc<AppState>>) -> Json<String> {
-    Json(state.singleton_manager.get_current_runner())
+/// Get the current runner ID hosting the singleton.
+async fn singleton_current_runner(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<String>, AppError> {
+    let runner = state.singleton_manager.get_current_runner().await?;
+    Ok(Json(runner))
 }
 
-/// Clear the leadership history.
-async fn singleton_clear_history(State(state): State<Arc<AppState>>) -> Json<()> {
-    state.singleton_manager.clear_history();
-    Json(())
-}
-
-/// Reset the sequence counter.
-///
-/// WARNING: Only for testing. May cause duplicate sequence numbers.
-async fn singleton_reset_sequence(State(state): State<Arc<AppState>>) -> Json<()> {
-    state.singleton_manager.reset_sequence();
-    Json(())
+/// Reset the singleton state (for testing).
+async fn singleton_reset(State(state): State<Arc<AppState>>) -> Result<Json<()>, AppError> {
+    state.singleton_manager.reset().await?;
+    Ok(Json(()))
 }
 
 // ============================================================================

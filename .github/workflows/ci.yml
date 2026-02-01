@@ -117,10 +117,32 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Start cluster and run E2E tests
+        working-directory: examples/cluster-tests
+        run: |
+          docker compose up -d --wait
+          docker compose --profile test run --rm e2e-tests
+      
+      - name: Show logs on failure
+        if: failure()
+        working-directory: examples/cluster-tests
+        run: docker compose logs
+      
+      - name: Cleanup
+        if: always()
+        working-directory: examples/cluster-tests
+        run: docker compose down -v
+
   # Ensure all jobs pass before merging
   ci-success:
     name: CI Success
-    needs: [check, clippy, fmt, test, doc]
+    needs: [check, clippy, fmt, test, doc, e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -130,7 +152,8 @@ jobs:
              [[ "${{ needs.clippy.result }}" != "success" ]] || \
              [[ "${{ needs.fmt.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.doc.result }}" != "success" ]]; then
+             [[ "${{ needs.doc.result }}" != "success" ]] || \
+             [[ "${{ needs.e2e.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

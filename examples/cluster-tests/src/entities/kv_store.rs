@@ -29,7 +29,7 @@ pub struct KVStoreState {
 /// - `delete(key)` - Delete a key
 /// - `list_keys()` - List all keys
 /// - `clear()` - Clear all data
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct KVStore;
 

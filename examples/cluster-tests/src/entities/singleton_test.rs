@@ -1,134 +1,144 @@
-//! SingletonTest - A proper cluster singleton for testing cluster-wide singleton behavior.
+//! SingletonTest - A cluster singleton that writes state to PostgreSQL.
 //!
-//! Unlike regular entities, this uses `register_singleton` to run a background task
-//! on exactly one runner in the cluster. The singleton tracks:
-//! - Leadership changes (which runner hosts the singleton)
-//! - A global sequence counter (guaranteed unique across the cluster)
+//! This demonstrates the singleton pattern: a background task that runs on
+//! exactly one node in the cluster. The singleton periodically writes to
+//! PostgreSQL, and HTTP endpoints read from PostgreSQL to observe its state.
 //!
-//! ## How it Works
-//!
-//! 1. Call `SingletonManager::new()` to create the manager
-//! 2. Call `manager.register(sharding)` to register the singleton with the cluster
-//! 3. Use `manager.get_next_sequence()` etc. to interact with the singleton
-//!
-//! The singleton task runs continuously on the runner that owns the computed shard.
-//! When that runner dies, the singleton migrates to another runner, which is
-//! recorded as a leadership change.
-
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+//! ## What it tests:
+//! - Singleton runs on exactly one node
+//! - Singleton increments a counter in PostgreSQL
+//! - Any node can read the singleton's state via PostgreSQL
+//! - If the singleton node dies, another node takes over
 
 use chrono::{DateTime, Utc};
 use cruster::error::ClusterError;
 use cruster::sharding::Sharding;
 use cruster::singleton::register_singleton;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use sqlx::PgPool;
+use std::sync::Arc;
 
 /// The name used for the singleton registration.
 pub const SINGLETON_NAME: &str = "cluster-tests/singleton-test";
 
-/// Record of a leadership change.
+/// Table name for singleton state.
+const TABLE_NAME: &str = "singleton_test_state";
+
+/// State stored in PostgreSQL by the singleton.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LeaderRecord {
-    /// The runner ID (address) that became leader.
+pub struct SingletonState {
+    /// The runner ID currently hosting the singleton.
     pub runner_id: String,
-    /// When this runner became leader.
+    /// Monotonically increasing tick counter.
+    pub tick_count: i64,
+    /// When the singleton last wrote to the database.
+    pub last_tick_at: DateTime<Utc>,
+    /// When this runner became the singleton leader.
     pub became_leader_at: DateTime<Utc>,
-    /// When this runner lost leadership (if it has).
-    pub lost_leadership_at: Option<DateTime<Utc>>,
 }
 
-/// Shared state for the singleton, protected by a mutex.
-#[derive(Debug, Default)]
-struct SingletonState {
-    /// History of leadership changes.
-    leader_history: Vec<LeaderRecord>,
-    /// Current runner ID.
-    current_runner: Option<String>,
-}
-
-/// Manager for the SingletonTest singleton.
+/// Manager for the singleton test.
 ///
-/// This provides a public API for interacting with the singleton state.
-/// The actual singleton task runs in the background on one runner.
+/// Holds the database pool for reading singleton state.
+/// The actual singleton runs as a background task on one node.
 pub struct SingletonManager {
-    /// Shared state protected by mutex.
-    state: Arc<Mutex<SingletonState>>,
-    /// Global sequence counter (atomic for lock-free access).
-    sequence: Arc<AtomicU64>,
-    /// Notification for when the singleton starts running.
-    started: Arc<Notify>,
+    pool: PgPool,
 }
 
 impl SingletonManager {
-    /// Create a new singleton manager.
-    pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(SingletonState::default())),
-            sequence: Arc::new(AtomicU64::new(0)),
-            started: Arc::new(Notify::new()),
-        }
+    /// Create a new singleton manager with the given database pool.
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Ensure the singleton state table exists.
+    pub async fn init_schema(&self) -> Result<(), ClusterError> {
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                runner_id TEXT NOT NULL,
+                tick_count BIGINT NOT NULL DEFAULT 0,
+                last_tick_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                became_leader_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT singleton_single_row CHECK (id = 1)
+            )
+            "#
+        ))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ClusterError::PersistenceError {
+            reason: format!("failed to create singleton table: {e}"),
+            source: Some(Box::new(e)),
+        })?;
+
+        Ok(())
     }
 
     /// Register the singleton with the cluster.
     ///
-    /// This must be called after creating the manager. The singleton task
-    /// will be spawned on the runner that owns the computed shard.
+    /// The singleton task will run on exactly one node and periodically
+    /// update its state in PostgreSQL.
     pub async fn register(&self, sharding: Arc<dyn Sharding>) -> Result<(), ClusterError> {
-        let state = self.state.clone();
-        let started = self.started.clone();
-
-        // Get the runner address to identify this runner
-        // We'll get it from the sharding config in the actual singleton task
+        let pool = self.pool.clone();
 
         register_singleton(sharding.as_ref(), SINGLETON_NAME, move || {
-            let state = state.clone();
-            let started = started.clone();
+            let pool = pool.clone();
 
             async move {
-                // Get the current runner's address - we're now the leader!
-                // Since we're inside the singleton, we know we're the current leader.
-                // The runner address is determined by the sharding config.
-                let runner_id = format!("runner-{}", std::process::id());
+                let runner_id = std::env::var("RUNNER_ADDRESS")
+                    .unwrap_or_else(|_| format!("runner-{}", std::process::id()));
 
                 tracing::info!(
                     runner = %runner_id,
                     "SingletonTest singleton started - this runner is now the leader"
                 );
 
-                // Record the leadership change
-                {
-                    let mut guard = state.lock();
-                    let now = Utc::now();
+                // Initialize or take over leadership
+                let now = Utc::now();
+                sqlx::query(&format!(
+                    r#"
+                    INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at)
+                    VALUES (1, $1, 0, $2, $2)
+                    ON CONFLICT (id) DO UPDATE SET
+                        runner_id = $1,
+                        became_leader_at = $2,
+                        last_tick_at = $2
+                    "#
+                ))
+                .bind(&runner_id)
+                .bind(now)
+                .execute(&pool)
+                .await
+                .map_err(|e| ClusterError::PersistenceError {
+                    reason: format!("singleton failed to initialize: {e}"),
+                    source: Some(Box::new(e)),
+                })?;
 
-                    // Mark previous leader as having lost leadership
-                    if let Some(last) = guard.leader_history.last_mut() {
-                        if last.lost_leadership_at.is_none() {
-                            last.lost_leadership_at = Some(now);
-                        }
-                    }
-
-                    // Add new leader record
-                    guard.leader_history.push(LeaderRecord {
-                        runner_id: runner_id.clone(),
-                        became_leader_at: now,
-                        lost_leadership_at: None,
-                    });
-                    guard.current_runner = Some(runner_id);
-                }
-
-                // Signal that we've started
-                started.notify_waiters();
-
-                // Keep the singleton running until cancelled
-                // In a real cluster, cancellation happens when:
-                // - The runner shuts down
-                // - The shard is reassigned to another runner
+                // Main loop: increment tick counter every second
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    tracing::trace!("SingletonTest singleton heartbeat");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+                    let now = Utc::now();
+                    // Use UPSERT to handle case where row was deleted by reset
+                    if let Err(e) = sqlx::query(&format!(
+                        r#"
+                        INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at)
+                        VALUES (1, $1, 1, $2, $2)
+                        ON CONFLICT (id) DO UPDATE SET
+                            tick_count = {TABLE_NAME}.tick_count + 1,
+                            last_tick_at = $2
+                        "#
+                    ))
+                    .bind(&runner_id)
+                    .bind(now)
+                    .execute(&pool)
+                    .await
+                    {
+                        tracing::warn!(error = %e, "singleton failed to update tick");
+                    } else {
+                        tracing::trace!("singleton tick");
+                    }
                 }
 
                 #[allow(unreachable_code)]
@@ -138,58 +148,61 @@ impl SingletonManager {
         .await
     }
 
-    /// Get the next global sequence number.
+    /// Get the current singleton state from PostgreSQL.
     ///
-    /// This is atomic and lock-free. Sequence numbers are guaranteed to be
-    /// unique and monotonically increasing across all runners.
-    pub fn get_next_sequence(&self) -> u64 {
-        self.sequence.fetch_add(1, Ordering::SeqCst) + 1
+    /// Returns None if the singleton hasn't started yet.
+    pub async fn get_state(&self) -> Result<Option<SingletonState>, ClusterError> {
+        let row = sqlx::query_as::<_, (String, i64, DateTime<Utc>, DateTime<Utc>)>(&format!(
+            r#"
+            SELECT runner_id, tick_count, last_tick_at, became_leader_at
+            FROM {TABLE_NAME}
+            WHERE id = 1
+            "#
+        ))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ClusterError::PersistenceError {
+            reason: format!("failed to read singleton state: {e}"),
+            source: Some(Box::new(e)),
+        })?;
+
+        Ok(row.map(|(runner_id, tick_count, last_tick_at, became_leader_at)| SingletonState {
+            runner_id,
+            tick_count,
+            last_tick_at,
+            became_leader_at,
+        }))
     }
 
-    /// Get the leadership change history.
-    pub fn get_leader_history(&self) -> Vec<LeaderRecord> {
-        self.state.lock().leader_history.clone()
-    }
-
-    /// Get the current runner ID.
+    /// Get the current tick count.
     ///
-    /// Returns the runner ID that is currently hosting the singleton,
-    /// or an empty string if no leader has been recorded yet.
-    pub fn get_current_runner(&self) -> String {
-        self.state.lock().current_runner.clone().unwrap_or_default()
+    /// Returns 0 if the singleton hasn't started yet.
+    pub async fn get_tick_count(&self) -> Result<i64, ClusterError> {
+        Ok(self.get_state().await?.map(|s| s.tick_count).unwrap_or(0))
     }
 
-    /// Clear the leadership history.
+    /// Get the current runner ID hosting the singleton.
     ///
-    /// This is useful for testing to reset the state.
-    /// Note: This does NOT reset the sequence counter to ensure uniqueness.
-    pub fn clear_history(&self) {
-        let mut guard = self.state.lock();
-        guard.leader_history.clear();
-        guard.current_runner = None;
+    /// Returns empty string if the singleton hasn't started yet.
+    pub async fn get_current_runner(&self) -> Result<String, ClusterError> {
+        Ok(self
+            .get_state()
+            .await?
+            .map(|s| s.runner_id)
+            .unwrap_or_default())
     }
 
-    /// Reset the sequence counter.
-    ///
-    /// WARNING: This should only be used in testing. In production, resetting
-    /// the sequence counter could cause duplicate sequence numbers.
-    pub fn reset_sequence(&self) {
-        self.sequence.store(0, Ordering::SeqCst);
-    }
+    /// Reset the singleton state (for testing).
+    pub async fn reset(&self) -> Result<(), ClusterError> {
+        sqlx::query(&format!("DELETE FROM {TABLE_NAME} WHERE id = 1"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| ClusterError::PersistenceError {
+                reason: format!("failed to reset singleton state: {e}"),
+                source: Some(Box::new(e)),
+            })?;
 
-    /// Wait for the singleton to start running.
-    ///
-    /// This is useful in tests to ensure the singleton is active before
-    /// making assertions.
-    #[allow(dead_code)]
-    pub async fn wait_for_start(&self) {
-        self.started.notified().await;
-    }
-}
-
-impl Default for SingletonManager {
-    fn default() -> Self {
-        Self::new()
+        Ok(())
     }
 }
 
@@ -198,76 +211,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_leader_record_serialization() {
-        let record = LeaderRecord {
-            runner_id: "runner-1".to_string(),
+    fn singleton_state_serialization() {
+        let state = SingletonState {
+            runner_id: "node1:9000".to_string(),
+            tick_count: 42,
+            last_tick_at: Utc::now(),
             became_leader_at: Utc::now(),
-            lost_leadership_at: None,
         };
 
-        let json = serde_json::to_string(&record).unwrap();
-        let parsed: LeaderRecord = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: SingletonState = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.runner_id, "runner-1");
-        assert!(parsed.lost_leadership_at.is_none());
-    }
-
-    #[test]
-    fn test_leader_record_with_lost_leadership() {
-        let record = LeaderRecord {
-            runner_id: "runner-1".to_string(),
-            became_leader_at: Utc::now(),
-            lost_leadership_at: Some(Utc::now()),
-        };
-
-        let json = serde_json::to_string(&record).unwrap();
-        let parsed: LeaderRecord = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(parsed.runner_id, "runner-1");
-        assert!(parsed.lost_leadership_at.is_some());
-    }
-
-    #[test]
-    fn test_singleton_manager_sequence() {
-        let manager = SingletonManager::new();
-
-        assert_eq!(manager.get_next_sequence(), 1);
-        assert_eq!(manager.get_next_sequence(), 2);
-        assert_eq!(manager.get_next_sequence(), 3);
-    }
-
-    #[test]
-    fn test_singleton_manager_reset_sequence() {
-        let manager = SingletonManager::new();
-
-        manager.get_next_sequence();
-        manager.get_next_sequence();
-        manager.reset_sequence();
-
-        assert_eq!(manager.get_next_sequence(), 1);
-    }
-
-    #[test]
-    fn test_singleton_manager_clear_history() {
-        let manager = SingletonManager::new();
-
-        // Simulate leadership record
-        {
-            let mut state = manager.state.lock();
-            state.leader_history.push(LeaderRecord {
-                runner_id: "test-runner".to_string(),
-                became_leader_at: Utc::now(),
-                lost_leadership_at: None,
-            });
-            state.current_runner = Some("test-runner".to_string());
-        }
-
-        assert_eq!(manager.get_leader_history().len(), 1);
-        assert_eq!(manager.get_current_runner(), "test-runner");
-
-        manager.clear_history();
-
-        assert!(manager.get_leader_history().is_empty());
-        assert_eq!(manager.get_current_runner(), "");
+        assert_eq!(parsed.runner_id, "node1:9000");
+        assert_eq!(parsed.tick_count, 42);
     }
 }

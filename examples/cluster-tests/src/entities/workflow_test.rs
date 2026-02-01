@@ -42,7 +42,7 @@ pub struct WorkflowTestState {
 /// ## RPCs
 /// - `get_execution(exec_id)` - Get a specific execution
 /// - `list_executions()` - List all executions
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct WorkflowTest;
 

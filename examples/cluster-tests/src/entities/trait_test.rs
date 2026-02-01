@@ -147,7 +147,7 @@ pub struct TraitTestState {
 /// ## RPCs
 /// - `update(data)` - Update data (logs via Auditable, bumps Versioned)
 /// - `get()` - Get current data
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct TraitTest;
 

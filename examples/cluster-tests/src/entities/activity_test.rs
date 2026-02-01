@@ -43,7 +43,7 @@ pub struct ActivityTestState {
 ///
 /// ## RPCs
 /// - `get_activity_log()` - Get the activity log
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct ActivityTest;
 

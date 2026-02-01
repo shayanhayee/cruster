@@ -23,8 +23,8 @@ test_pass "all steps recorded"
 LONG_ID="long-$(date +%s)"
 RESULT=$(post "/workflow/$ID/run-long" "{\"exec_id\": \"$LONG_ID\", \"steps\": 10}")
 EXEC=$(get "/workflow/$ID/execution/$LONG_ID")
-# Verify we have 10 steps recorded
-for i in $(seq 1 10); do
+# Verify we have 10 steps recorded (0-indexed: step0 through step9)
+for i in $(seq 0 9); do
     assert_contains "$EXEC" "step$i"
 done
 test_pass "long workflow completes with all steps"

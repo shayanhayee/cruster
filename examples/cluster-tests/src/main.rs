@@ -80,6 +80,7 @@ struct Args {
 struct Cluster {
     sharding: Arc<ShardingImpl>,
     config: Arc<ShardingConfig>,
+    pool: sqlx::PgPool,
     _grpc_shutdown: tokio::sync::oneshot::Sender<()>,
 }
 
@@ -90,6 +91,10 @@ impl Cluster {
 
     fn config(&self) -> Arc<ShardingConfig> {
         self.config.clone()
+    }
+
+    fn pool(&self) -> sqlx::PgPool {
+        self.pool.clone()
     }
 
     async fn shutdown(self) -> Result<()> {
@@ -186,6 +191,7 @@ async fn create_cluster(
     Ok(Cluster {
         sharding,
         config,
+        pool,
         _grpc_shutdown: shutdown_tx,
     })
 }
@@ -267,7 +273,11 @@ async fn main() -> Result<()> {
     tracing::info!("Registered CrossEntity entity");
 
     // Register the singleton using cluster's register_singleton feature
-    let singleton_manager = Arc::new(SingletonManager::new());
+    let singleton_manager = Arc::new(SingletonManager::new(cluster.pool()));
+    singleton_manager
+        .init_schema()
+        .await
+        .expect("failed to initialize singleton schema");
     singleton_manager
         .register(sharding.clone())
         .await

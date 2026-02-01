@@ -14,7 +14,7 @@ assert_eq "$RESULT" "42"
 test_pass "initial value set"
 
 echo "Waiting for entity eviction (idle timeout)..."
-sleep 70  # Default max_idle_time is 60s
+sleep 7  # max_idle_time_secs = 5, plus buffer for reaper interval
 
 # Value should persist after eviction
 RESULT=$(get "/counter/$ID")

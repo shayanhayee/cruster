@@ -42,7 +42,7 @@ pub struct CrossEntityState {
 /// - `get_messages()` - Get all received messages
 /// - `clear_messages()` - Clear all received messages
 /// - `ping(count)` - Receive a ping and return count for pong
-#[entity(max_idle_time_secs = 60)]
+#[entity(max_idle_time_secs = 5)]
 #[derive(Clone)]
 pub struct CrossEntity;
 
@@ -60,6 +60,20 @@ pub struct ReceiveRequest {
 pub struct PingRequest {
     /// Current ping count.
     pub count: u32,
+}
+
+/// Request to clear messages (includes unique ID for workflow deduplication).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClearMessagesRequest {
+    /// Unique request ID to ensure each clear is a new workflow execution.
+    pub request_id: String,
+}
+
+/// Request to reset ping count (includes unique ID for workflow deduplication).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResetPingCountRequest {
+    /// Unique request ID to ensure each reset is a new workflow execution.
+    pub request_id: String,
 }
 
 #[entity_impl]
@@ -110,8 +124,11 @@ impl CrossEntity {
     }
 
     /// Clear all received messages.
+    ///
+    /// Each call must have a unique `request_id` to ensure it executes as a new
+    /// workflow (not replayed from journal).
     #[workflow]
-    pub async fn clear_messages(&self) -> Result<(), ClusterError> {
+    pub async fn clear_messages(&self, _request: ClearMessagesRequest) -> Result<(), ClusterError> {
         self.do_clear_messages().await
     }
 
@@ -132,8 +149,14 @@ impl CrossEntity {
     }
 
     /// Reset the ping count.
+    ///
+    /// Each call must have a unique `request_id` to ensure it executes as a new
+    /// workflow (not replayed from journal).
     #[workflow]
-    pub async fn reset_ping_count(&self) -> Result<(), ClusterError> {
+    pub async fn reset_ping_count(
+        &self,
+        _request: ResetPingCountRequest,
+    ) -> Result<(), ClusterError> {
         self.do_reset_ping_count().await
     }
 }

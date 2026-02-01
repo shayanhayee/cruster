@@ -38,9 +38,11 @@ services:
       timeout: 5s
       retries: 10
 
-  # Cluster nodes use prebuilt image (built by CI or `docker build --target ci`)
   node1:
-    image: cluster-tests:latest
+    build:
+      context: ../..
+      dockerfile: examples/cluster-tests/Dockerfile
+      target: runtime
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379
@@ -60,7 +62,10 @@ services:
       retries: 12
 
   node2:
-    image: cluster-tests:latest
+    build:
+      context: ../..
+      dockerfile: examples/cluster-tests/Dockerfile
+      target: runtime
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379
@@ -82,7 +87,10 @@ services:
       retries: 12
 
   node3:
-    image: cluster-tests:latest
+    build:
+      context: ../..
+      dockerfile: examples/cluster-tests/Dockerfile
+      target: runtime
     environment:
       POSTGRES_URL: postgres://cruster:cruster@postgres:5432/cruster
       ETCD_ENDPOINTS: etcd:2379

@@ -18,7 +18,7 @@ env:
 jobs:
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -29,11 +29,9 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -45,11 +43,9 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -61,11 +57,9 @@ jobs:
 
   docs:
     name: Docs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -78,11 +72,9 @@ jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -99,7 +91,7 @@ jobs:
   e2e:
     name: E2E Tests
     needs: [fmt, clippy, test, docs, build]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
       
@@ -142,7 +134,7 @@ jobs:
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
       !contains(github.event.head_commit.message, 'chore: prepare release')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     permissions:
       contents: write
       pull-requests: write
@@ -174,14 +166,11 @@ jobs:
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
       contains(github.event.head_commit.message, 'chore: prepare release')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cruster]
     permissions:
       contents: write  # Required for creating releases and tags
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

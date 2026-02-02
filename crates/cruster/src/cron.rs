@@ -140,21 +140,23 @@ impl ClusterCron {
             .register_singleton(
                 &name,
                 None,
-                Arc::new(move |_ctx| -> BoxFuture<'static, Result<(), ClusterError>> {
-                    let cron_name = cron_name.clone();
-                    let schedule = schedule.clone();
-                    let handler = Arc::clone(&handler);
-                    Box::pin(async move {
-                        cron_loop(
-                            &cron_name,
-                            &schedule,
-                            handler,
-                            calculate_next_from_previous,
-                            skip_if_older_than,
-                        )
-                        .await
-                    })
-                }),
+                Arc::new(
+                    move |_ctx| -> BoxFuture<'static, Result<(), ClusterError>> {
+                        let cron_name = cron_name.clone();
+                        let schedule = schedule.clone();
+                        let handler = Arc::clone(&handler);
+                        Box::pin(async move {
+                            cron_loop(
+                                &cron_name,
+                                &schedule,
+                                handler,
+                                calculate_next_from_previous,
+                                skip_if_older_than,
+                            )
+                            .await
+                        })
+                    },
+                ),
             )
             .await
     }

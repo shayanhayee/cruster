@@ -60,7 +60,9 @@ pub trait Sharding: Send + Sync {
         &self,
         name: &str,
         shard_group: Option<&str>,
-        run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+        run: Arc<
+            dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync,
+        >,
     ) -> Result<(), ClusterError>;
 
     /// Create a client for an entity type.

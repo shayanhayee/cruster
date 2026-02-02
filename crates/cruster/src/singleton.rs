@@ -293,13 +293,15 @@ mod tests {
             let c = count.clone();
             singletons.push((
                 format!("singleton-{i}"),
-                Arc::new(move |_ctx| -> BoxFuture<'static, Result<(), ClusterError>> {
-                    let c = c.clone();
-                    Box::pin(async move {
-                        c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        Ok(())
-                    })
-                }),
+                Arc::new(
+                    move |_ctx| -> BoxFuture<'static, Result<(), ClusterError>> {
+                        let c = c.clone();
+                        Box::pin(async move {
+                            c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            Ok(())
+                        })
+                    },
+                ),
             ));
         }
 

@@ -1372,38 +1372,37 @@ impl ShardingImpl {
 
             // Result type: Option<Result<Result<(), ClusterError>, Box<dyn Any + Send>>>
             // None = force-cancelled, Some(...) = completed or panicked
-            let result: Option<Result<Result<(), ClusterError>, Box<dyn std::any::Any + Send>>> =
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        // Cancellation triggered - check if singleton is managing it
-                        if managed.load(Ordering::Acquire) {
-                            // Singleton opted in - wait for it to finish gracefully
-                            tracing::debug!(name = %name, "singleton managing cancellation, waiting for graceful shutdown");
-                            match factory_handle.await {
-                                Ok(result) => Some(result),
-                                Err(join_err) => {
-                                    tracing::error!(name = %name, "singleton task join error: {}", join_err);
-                                    None
-                                }
-                            }
-                        } else {
-                            // Singleton didn't opt in - force cancel it
-                            tracing::debug!(name = %name, "singleton not managing cancellation, force-cancelling");
-                            factory_handle.abort();
-                            None // Force-cancelled, treat as success
-                        }
-                    }
-                    join_result = &mut factory_handle => {
-                        // Factory completed before cancellation
-                        match join_result {
+            let result: Option<Result<Result<(), ClusterError>, Box<dyn std::any::Any + Send>>> = tokio::select! {
+                _ = cancel.cancelled() => {
+                    // Cancellation triggered - check if singleton is managing it
+                    if managed.load(Ordering::Acquire) {
+                        // Singleton opted in - wait for it to finish gracefully
+                        tracing::debug!(name = %name, "singleton managing cancellation, waiting for graceful shutdown");
+                        match factory_handle.await {
                             Ok(result) => Some(result),
                             Err(join_err) => {
                                 tracing::error!(name = %name, "singleton task join error: {}", join_err);
                                 None
                             }
                         }
+                    } else {
+                        // Singleton didn't opt in - force cancel it
+                        tracing::debug!(name = %name, "singleton not managing cancellation, force-cancelling");
+                        factory_handle.abort();
+                        None // Force-cancelled, treat as success
                     }
-                };
+                }
+                join_result = &mut factory_handle => {
+                    // Factory completed before cancellation
+                    match join_result {
+                        Ok(result) => Some(result),
+                        Err(join_err) => {
+                            tracing::error!(name = %name, "singleton task join error: {}", join_err);
+                            None
+                        }
+                    }
+                }
+            };
 
             // Handle the result
             let mut failed = false;
@@ -1565,7 +1564,11 @@ impl ShardingImpl {
                             singleton.cancel.cancel();
                             let is_managed =
                                 singleton.managed.load(std::sync::atomic::Ordering::Acquire);
-                            let handle = if is_managed { singleton.handle.take() } else { None };
+                            let handle = if is_managed {
+                                singleton.handle.take()
+                            } else {
+                                None
+                            };
                             (true, is_managed, handle)
                         } else {
                             (false, false, None)
@@ -1778,7 +1781,9 @@ impl Sharding for ShardingImpl {
         &self,
         name: &str,
         shard_group: Option<&str>,
-        run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+        run: Arc<
+            dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync,
+        >,
     ) -> Result<(), ClusterError> {
         // Serialize with sync_singletons to prevent races.
         // Matches the TS `withSingletonLock` (Sharding.ts).

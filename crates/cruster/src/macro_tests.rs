@@ -644,7 +644,11 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<
+                dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>>
+                    + Send
+                    + Sync,
+            >,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -727,7 +731,11 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<
+                dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>>
+                    + Send
+                    + Sync,
+            >,
         ) -> Result<(), ClusterError> {
             Ok(())
         }

@@ -202,7 +202,16 @@ impl SingletonManager {
     ///
     /// Returns None if the singleton hasn't started yet.
     pub async fn get_state(&self) -> Result<Option<SingletonState>, ClusterError> {
-        let row = sqlx::query_as::<_, (String, i64, DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>(&format!(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                i64,
+                DateTime<Utc>,
+                DateTime<Utc>,
+                Option<DateTime<Utc>>,
+            ),
+        >(&format!(
             r#"
             SELECT runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at
             FROM {TABLE_NAME}
@@ -217,12 +226,14 @@ impl SingletonManager {
         })?;
 
         Ok(row.map(
-            |(runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at)| SingletonState {
-                runner_id,
-                tick_count,
-                last_tick_at,
-                became_leader_at,
-                graceful_shutdown_at,
+            |(runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at)| {
+                SingletonState {
+                    runner_id,
+                    tick_count,
+                    last_tick_at,
+                    became_leader_at,
+                    graceful_shutdown_at,
+                }
             },
         ))
     }

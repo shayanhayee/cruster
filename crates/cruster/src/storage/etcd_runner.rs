@@ -58,10 +58,6 @@ impl EtcdRunnerStorage {
         format!("{}shards/{}:{}", self.prefix, shard_id.group, shard_id.id)
     }
 
-    fn shards_prefix(&self) -> String {
-        format!("{}shards/", self.prefix)
-    }
-
     fn machine_id_key(&self) -> String {
         format!("{}machine_id_counter", self.prefix)
     }
@@ -333,34 +329,8 @@ impl RunnerStorage for EtcdRunnerStorage {
     }
 
     async fn unregister(&self, address: &RunnerAddress) -> Result<(), ClusterError> {
-        let mut client = self.client.lock().await;
-
-        // Delete runner key.
-        let key = self.runner_key(address);
-        client.delete(key, None).await.map_err(Self::map_err)?;
-
-        // Release all shard locks held by this runner.
-        drop(client);
-        self.release_all(address).await?;
-
-        // Cancel keep-alive.
-        if let Some(handle) = self.keep_alive_handle.lock().take() {
-            handle.abort();
-        }
-
-        // Revoke lease.
-        if let Some(lease_id) = self.lease_id.lock().await.take() {
-            let mut client = self.client.lock().await;
-            if let Err(e) = client.lease_revoke(lease_id).await {
-                tracing::warn!(
-                    lease_id,
-                    error = %e,
-                    "etcd lease revocation failed during unregister — lease will expire via TTL"
-                );
-            }
-        }
-
-        Ok(())
+        // Revoking the lease deletes the runner key and all shard locks atomically.
+        self.release_all(address).await
     }
 
     async fn get_runners(&self) -> Result<Vec<Runner>, ClusterError> {
@@ -725,46 +695,24 @@ impl RunnerStorage for EtcdRunnerStorage {
         Ok(())
     }
 
-    async fn release_all(&self, runner: &RunnerAddress) -> Result<(), ClusterError> {
-        let mut client = self.client.lock().await;
-        let prefix = self.shards_prefix();
-        let value = format!("{}:{}", runner.host, runner.port);
+    async fn release_all(&self, _runner: &RunnerAddress) -> Result<(), ClusterError> {
+        // Cancel keep-alive task first to stop refreshing the lease.
+        if let Some(handle) = self.keep_alive_handle.lock().take() {
+            handle.abort();
+        }
 
-        // Get all shard keys.
-        let resp = client
-            .get(prefix, Some(GetOptions::new().with_prefix()))
-            .await
-            .map_err(Self::map_err)?;
-
-        // Delete those that belong to this runner using CAS transactions
-        // to avoid deleting locks that were re-acquired by another runner
-        // between the prefix get and the individual deletes.
-        for kv in resp.kvs() {
-            let existing = match std::str::from_utf8(kv.value()) {
-                Ok(s) => s,
-                Err(e) => {
-                    let key_str = std::str::from_utf8(kv.key()).unwrap_or("<non-utf8>");
-                    tracing::warn!(
-                        key = key_str,
-                        error = %e,
-                        "release_all: shard lock value contains non-UTF-8 data, skipping"
-                    );
-                    continue;
-                }
-            };
-            if existing == value {
-                let txn = Txn::new()
-                    .when([Compare::value(kv.key(), CompareOp::Equal, value.as_bytes())])
-                    .and_then([TxnOp::delete(kv.key(), None)]);
-
-                let txn_resp = client.txn(txn).await.map_err(Self::map_err)?;
-                if !txn_resp.succeeded() {
-                    let key_str = std::str::from_utf8(kv.key()).unwrap_or("<non-utf8>");
-                    tracing::warn!(
-                        key = key_str,
-                        "release_all: CAS-delete failed, lock was re-acquired by another runner"
-                    );
-                }
+        // Revoke the lease. This atomically deletes ALL keys attached to it:
+        // - The runner registration key
+        // - All shard lock keys
+        // This is O(1) instead of O(shards) and completes in a single etcd operation.
+        if let Some(lease_id) = self.lease_id.lock().await.take() {
+            let mut client = self.client.lock().await;
+            if let Err(e) = client.lease_revoke(lease_id).await {
+                tracing::warn!(
+                    lease_id,
+                    error = %e,
+                    "release_all: lease revocation failed — keys will expire via TTL"
+                );
             }
         }
 

@@ -21,12 +21,15 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
-use crate::durable::{StorageTransaction, WorkflowStorage};
+use crate::durable::WorkflowStorage;
+#[cfg(feature = "sql")]
+use crate::durable::StorageTransaction;
 use crate::error::ClusterError;
 
 // Type aliases to reduce complexity warnings
 type PendingWrites = Arc<parking_lot::Mutex<Vec<(String, Vec<u8>)>>>;
 type PendingArcSwaps = Arc<parking_lot::Mutex<Vec<Box<dyn FnOnce() + Send>>>>;
+#[cfg(feature = "sql")]
 type SharedTransaction = Arc<TokioMutex<Box<dyn StorageTransaction>>>;
 
 // Thread-local storage for the active transaction context.
@@ -43,7 +46,9 @@ struct ActiveTransaction {
     /// Pending ArcSwap updates to apply on commit.
     pending_arc_swaps: PendingArcSwaps,
     /// The underlying transaction, wrapped for shared access.
-    /// This allows activities to execute SQL within the transaction.
+    /// This allows activities to execute SQL within the transaction via
+    /// `ActivityScope::sql_transaction()`.
+    #[cfg(feature = "sql")]
     transaction: SharedTransaction,
 }
 
@@ -96,6 +101,7 @@ impl ActivityScope {
         let active = ActiveTransaction {
             pending_writes: pending_writes.clone(),
             pending_arc_swaps: pending_arc_swaps.clone(),
+            #[cfg(feature = "sql")]
             transaction: transaction.clone(),
         };
 

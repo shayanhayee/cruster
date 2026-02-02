@@ -19,7 +19,7 @@ name = "prepare-release"
 
 [[workflows.steps]]
 type = "Command"
-command = "git switch -c release || git switch release && git reset --hard origin/main"
+command = "git checkout -B release origin/main"
 
 [[workflows.steps]]
 type = "PrepareRelease"

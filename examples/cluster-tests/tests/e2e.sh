@@ -43,6 +43,19 @@ echo ""
 "$SCRIPT_DIR/test_singletons.sh"
 echo ""
 
+"$SCRIPT_DIR/test_sql_activity.sh"
+echo ""
+
+# Singleton failover test runs last since it kills a node
+# Only run if DOCKER_COMPOSE_PROJECT is set
+if [ -n "$DOCKER_COMPOSE_PROJECT" ]; then
+    "$SCRIPT_DIR/test_singleton_failover.sh"
+    echo ""
+else
+    echo "SKIP: test_singleton_failover.sh (set DOCKER_COMPOSE_PROJECT to enable)"
+    echo ""
+fi
+
 echo "========================================="
 echo "All E2E tests passed!"
 echo "========================================="

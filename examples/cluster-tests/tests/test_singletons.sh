@@ -53,7 +53,17 @@ fi
 if ! echo "$STATE" | grep -q "last_tick_at"; then
     test_fail "state missing last_tick_at"
 fi
+if ! echo "$STATE" | grep -q "graceful_shutdown_at"; then
+    test_fail "state missing graceful_shutdown_at"
+fi
 test_pass "singleton state has all fields"
+
+# Verify graceful_shutdown_at is null while running
+GRACEFUL_SHUTDOWN=$(echo "$STATE" | jq -r '.graceful_shutdown_at')
+if [ "$GRACEFUL_SHUTDOWN" != "null" ]; then
+    test_fail "graceful_shutdown_at should be null while running, got: $GRACEFUL_SHUTDOWN"
+fi
+test_pass "graceful_shutdown_at is null while singleton is running"
 
 # Test reset
 post "/singleton/reset" "{}" > /dev/null

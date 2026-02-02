@@ -15,6 +15,7 @@ mod tests {
     use crate::reply::{ExitResult, Reply, ReplyWithExit};
     use crate::sharding::{Sharding, ShardingRegistrationEvent};
     use crate::sharding_impl::ShardingImpl;
+    use crate::singleton::SingletonContext;
     use crate::snowflake::SnowflakeGenerator;
     use crate::storage::memory_message::MemoryMessageStorage;
     use crate::storage::noop_runners::NoopRunners;
@@ -643,7 +644,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -726,7 +727,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }

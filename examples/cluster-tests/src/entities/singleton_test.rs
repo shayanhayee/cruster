@@ -13,7 +13,7 @@
 use chrono::{DateTime, Utc};
 use cruster::error::ClusterError;
 use cruster::sharding::Sharding;
-use cruster::singleton::register_singleton;
+use cruster::singleton::{register_singleton, SingletonContext};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -35,6 +35,8 @@ pub struct SingletonState {
     pub last_tick_at: DateTime<Utc>,
     /// When this runner became the singleton leader.
     pub became_leader_at: DateTime<Utc>,
+    /// When this singleton gracefully shut down (None if still running or force-killed).
+    pub graceful_shutdown_at: Option<DateTime<Utc>>,
 }
 
 /// Manager for the singleton test.
@@ -61,6 +63,7 @@ impl SingletonManager {
                 tick_count BIGINT NOT NULL DEFAULT 0,
                 last_tick_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 became_leader_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                graceful_shutdown_at TIMESTAMPTZ,
                 CONSTRAINT singleton_single_row CHECK (id = 1)
             )
             "#
@@ -72,20 +75,38 @@ impl SingletonManager {
             source: Some(Box::new(e)),
         })?;
 
+        // Add graceful_shutdown_at column if it doesn't exist (migration for existing tables)
+        sqlx::query(&format!(
+            r#"
+            ALTER TABLE {TABLE_NAME} 
+            ADD COLUMN IF NOT EXISTS graceful_shutdown_at TIMESTAMPTZ
+            "#
+        ))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| ClusterError::PersistenceError {
+            reason: format!("failed to add graceful_shutdown_at column: {e}"),
+            source: Some(Box::new(e)),
+        })?;
+
         Ok(())
     }
 
     /// Register the singleton with the cluster.
     ///
     /// The singleton task will run on exactly one node and periodically
-    /// update its state in PostgreSQL.
+    /// update its state in PostgreSQL. It manages its own cancellation to
+    /// demonstrate graceful shutdown when the shard moves to another node.
     pub async fn register(&self, sharding: Arc<dyn Sharding>) -> Result<(), ClusterError> {
         let pool = self.pool.clone();
 
-        register_singleton(sharding.as_ref(), SINGLETON_NAME, move || {
+        register_singleton(sharding.as_ref(), SINGLETON_NAME, move |ctx: SingletonContext| {
             let pool = pool.clone();
 
             async move {
+                // Opt-in to manage cancellation for graceful shutdown
+                let cancel = ctx.cancellation();
+
                 let runner_id = std::env::var("RUNNER_ADDRESS")
                     .unwrap_or_else(|_| format!("runner-{}", std::process::id()));
 
@@ -94,16 +115,17 @@ impl SingletonManager {
                     "SingletonTest singleton started - this runner is now the leader"
                 );
 
-                // Initialize or take over leadership
+                // Initialize or take over leadership (clear any previous graceful_shutdown_at)
                 let now = Utc::now();
                 sqlx::query(&format!(
                     r#"
-                    INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at)
-                    VALUES (1, $1, 0, $2, $2)
+                    INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at)
+                    VALUES (1, $1, 0, $2, $2, NULL)
                     ON CONFLICT (id) DO UPDATE SET
                         runner_id = $1,
                         became_leader_at = $2,
-                        last_tick_at = $2
+                        last_tick_at = $2,
+                        graceful_shutdown_at = NULL
                     "#
                 ))
                 .bind(&runner_id)
@@ -115,33 +137,61 @@ impl SingletonManager {
                     source: Some(Box::new(e)),
                 })?;
 
-                // Main loop: increment tick counter every second
+                // Main loop: increment tick counter every second, exit on cancellation
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-                    let now = Utc::now();
-                    // Use UPSERT to handle case where row was deleted by reset
-                    if let Err(e) = sqlx::query(&format!(
-                        r#"
-                        INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at)
-                        VALUES (1, $1, 1, $2, $2)
-                        ON CONFLICT (id) DO UPDATE SET
-                            tick_count = {TABLE_NAME}.tick_count + 1,
-                            last_tick_at = $2
-                        "#
-                    ))
-                    .bind(&runner_id)
-                    .bind(now)
-                    .execute(&pool)
-                    .await
-                    {
-                        tracing::warn!(error = %e, "singleton failed to update tick");
-                    } else {
-                        tracing::trace!("singleton tick");
+                    tokio::select! {
+                        _ = cancel.cancelled() => {
+                            // Graceful shutdown: write marker to database
+                            tracing::info!(
+                                runner = %runner_id,
+                                "SingletonTest singleton shutting down gracefully"
+                            );
+                            let now = Utc::now();
+                            if let Err(e) = sqlx::query(&format!(
+                                r#"
+                                UPDATE {TABLE_NAME}
+                                SET graceful_shutdown_at = $1
+                                WHERE id = 1
+                                "#
+                            ))
+                            .bind(now)
+                            .execute(&pool)
+                            .await
+                            {
+                                tracing::error!(error = %e, "failed to write graceful shutdown marker");
+                            } else {
+                                tracing::info!(
+                                    runner = %runner_id,
+                                    "SingletonTest singleton wrote graceful shutdown marker"
+                                );
+                            }
+                            break;
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                            let now = Utc::now();
+                            // Use UPSERT to handle case where row was deleted by reset
+                            if let Err(e) = sqlx::query(&format!(
+                                r#"
+                                INSERT INTO {TABLE_NAME} (id, runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at)
+                                VALUES (1, $1, 1, $2, $2, NULL)
+                                ON CONFLICT (id) DO UPDATE SET
+                                    tick_count = {TABLE_NAME}.tick_count + 1,
+                                    last_tick_at = $2
+                                "#
+                            ))
+                            .bind(&runner_id)
+                            .bind(now)
+                            .execute(&pool)
+                            .await
+                            {
+                                tracing::warn!(error = %e, "singleton failed to update tick");
+                            } else {
+                                tracing::trace!("singleton tick");
+                            }
+                        }
                     }
                 }
 
-                #[allow(unreachable_code)]
                 Ok(())
             }
         })
@@ -152,9 +202,9 @@ impl SingletonManager {
     ///
     /// Returns None if the singleton hasn't started yet.
     pub async fn get_state(&self) -> Result<Option<SingletonState>, ClusterError> {
-        let row = sqlx::query_as::<_, (String, i64, DateTime<Utc>, DateTime<Utc>)>(&format!(
+        let row = sqlx::query_as::<_, (String, i64, DateTime<Utc>, DateTime<Utc>, Option<DateTime<Utc>>)>(&format!(
             r#"
-            SELECT runner_id, tick_count, last_tick_at, became_leader_at
+            SELECT runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at
             FROM {TABLE_NAME}
             WHERE id = 1
             "#
@@ -167,11 +217,12 @@ impl SingletonManager {
         })?;
 
         Ok(row.map(
-            |(runner_id, tick_count, last_tick_at, became_leader_at)| SingletonState {
+            |(runner_id, tick_count, last_tick_at, became_leader_at, graceful_shutdown_at)| SingletonState {
                 runner_id,
                 tick_count,
                 last_tick_at,
                 became_leader_at,
+                graceful_shutdown_at,
             },
         ))
     }

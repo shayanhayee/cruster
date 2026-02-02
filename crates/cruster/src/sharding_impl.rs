@@ -32,6 +32,7 @@ use crate::runner_storage::RunnerStorage;
 use crate::runners::Runners;
 use crate::shard_assigner::ShardAssigner;
 use crate::sharding::{Sharding, ShardingRegistrationEvent};
+use crate::singleton::SingletonContext;
 use crate::snowflake::{Snowflake, SnowflakeGenerator};
 use crate::types::{EntityId, EntityType, RunnerAddress, ShardId};
 
@@ -141,7 +142,11 @@ pub struct ShardingImpl {
 
 /// A reusable singleton factory function that can be called multiple times
 /// to (re)start the singleton after shard round-trips.
-type SingletonFactory = Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>;
+///
+/// The factory receives a [`SingletonContext`] containing a cancellation token
+/// for graceful shutdown.
+type SingletonFactory =
+    Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>;
 
 /// A registered singleton entry.
 struct SingletonEntry {
@@ -165,6 +170,10 @@ struct SingletonEntry {
     /// Epoch millis of the last failure. 0 = no failure recorded.
     /// Shared with the spawned task so it can record failure time.
     last_failure_ms: Arc<std::sync::atomic::AtomicU64>,
+    /// Whether the singleton has opted in to manage its own cancellation.
+    /// Shared with the spawned task's SingletonContext.
+    /// If true, sync_singletons will await the handle when cancelling.
+    managed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ShardingImpl {
@@ -347,7 +356,7 @@ impl ShardingImpl {
             let this = Arc::clone(self);
             // We cannot call async register_singleton from a sync fn, so insert directly.
             let cancel = tokio_util::sync::CancellationToken::new();
-            let factory: SingletonFactory = Arc::new(move || {
+            let factory: SingletonFactory = Arc::new(move |_ctx| {
                 let this = Arc::clone(&this);
                 Box::pin(async move { this.runner_health_loop().await })
             });
@@ -361,6 +370,7 @@ impl ShardingImpl {
                     shard_group: "default".to_string(),
                     consecutive_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                     last_failure_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    managed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 },
             );
             // sync_singletons() will spawn it when the appropriate shard is acquired.
@@ -1335,50 +1345,92 @@ impl ShardingImpl {
         &self,
         name: String,
         cancel: tokio_util::sync::CancellationToken,
-        factory: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+        factory: SingletonFactory,
         running_flag: Arc<std::sync::atomic::AtomicBool>,
         failure_count: Arc<std::sync::atomic::AtomicU32>,
         failure_time: Arc<std::sync::atomic::AtomicU64>,
+        managed: Arc<std::sync::atomic::AtomicBool>,
     ) -> tokio::task::JoinHandle<()> {
         running_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Reset managed flag for this spawn cycle
+        managed.store(false, std::sync::atomic::Ordering::Release);
+        let managed_clone = managed.clone();
         tokio::spawn(async move {
             use futures::FutureExt;
+            use std::sync::atomic::Ordering;
 
-            let factory_fut =
-                std::panic::AssertUnwindSafe(async move { (factory)().await }).catch_unwind();
-            let mut failed = false;
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    tracing::info!(name = %name, "singleton cancelled");
-                },
-                result = factory_fut => {
-                    match result {
-                        Ok(Ok(())) => {
-                            tracing::debug!(name = %name, "singleton completed normally, waiting for cancellation");
-                            failure_count.store(0, std::sync::atomic::Ordering::Release);
-                            cancel.cancelled().await;
-                            tracing::info!(name = %name, "singleton cancelled after normal completion");
-                        },
-                        Ok(Err(e)) => {
-                            tracing::error!(name = %name, error = %e, "singleton failed");
-                            failed = true;
-                        },
-                        Err(_panic) => {
-                            tracing::error!(name = %name, "singleton panicked");
-                            failed = true;
-                        },
+            // Create context with cancellation token for graceful shutdown.
+            // The managed flag is shared with SingletonEntry so sync_singletons
+            // can check if the singleton opted in to manage cancellation.
+            let ctx = SingletonContext::new(cancel.clone(), managed_clone);
+            let managed = ctx.managed.clone();
+
+            // Spawn the factory in a separate task so we can choose to abort or await it
+            let mut factory_handle = tokio::spawn(
+                std::panic::AssertUnwindSafe(async move { (factory)(ctx).await }).catch_unwind(),
+            );
+
+            // Result type: Option<Result<Result<(), ClusterError>, Box<dyn Any + Send>>>
+            // None = force-cancelled, Some(...) = completed or panicked
+            let result: Option<Result<Result<(), ClusterError>, Box<dyn std::any::Any + Send>>> =
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        // Cancellation triggered - check if singleton is managing it
+                        if managed.load(Ordering::Acquire) {
+                            // Singleton opted in - wait for it to finish gracefully
+                            tracing::debug!(name = %name, "singleton managing cancellation, waiting for graceful shutdown");
+                            match factory_handle.await {
+                                Ok(result) => Some(result),
+                                Err(join_err) => {
+                                    tracing::error!(name = %name, "singleton task join error: {}", join_err);
+                                    None
+                                }
+                            }
+                        } else {
+                            // Singleton didn't opt in - force cancel it
+                            tracing::debug!(name = %name, "singleton not managing cancellation, force-cancelling");
+                            factory_handle.abort();
+                            None // Force-cancelled, treat as success
+                        }
                     }
+                    join_result = &mut factory_handle => {
+                        // Factory completed before cancellation
+                        match join_result {
+                            Ok(result) => Some(result),
+                            Err(join_err) => {
+                                tracing::error!(name = %name, "singleton task join error: {}", join_err);
+                                None
+                            }
+                        }
+                    }
+                };
+
+            // Handle the result
+            let mut failed = false;
+            match result {
+                Some(Ok(Ok(()))) | None => {
+                    tracing::debug!(name = %name, "singleton completed normally");
+                    failure_count.store(0, Ordering::Release);
+                }
+                Some(Ok(Err(e))) => {
+                    tracing::error!(name = %name, error = %e, "singleton failed");
+                    failed = true;
+                }
+                Some(Err(_panic)) => {
+                    tracing::error!(name = %name, "singleton panicked");
+                    failed = true;
                 }
             }
+
             if failed {
-                failure_count.fetch_add(1, std::sync::atomic::Ordering::Release);
+                failure_count.fetch_add(1, Ordering::Release);
                 let now_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .expect("system clock before Unix epoch")
                     .as_millis() as u64;
-                failure_time.store(now_ms, std::sync::atomic::Ordering::Release);
+                failure_time.store(now_ms, Ordering::Release);
             }
-            running_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+            running_flag.store(false, Ordering::SeqCst);
         })
     }
 
@@ -1485,6 +1537,7 @@ impl ShardingImpl {
                     let running_flag = Arc::clone(&singleton.running);
                     let failure_count = Arc::clone(&singleton.consecutive_failures);
                     let failure_time = Arc::clone(&singleton.last_failure_ms);
+                    let managed_flag = Arc::clone(&singleton.managed);
                     let handle = self.spawn_singleton_task(
                         name_clone,
                         new_cancel,
@@ -1492,6 +1545,7 @@ impl ShardingImpl {
                         running_flag,
                         failure_count,
                         failure_time,
+                        managed_flag,
                     );
                     singleton.handle = Some(handle);
                     tracing::info!(name = %snap.name, "started singleton (shard acquired)");
@@ -1500,12 +1554,35 @@ impl ShardingImpl {
                 tracing::debug!(name = %snap.name, "singleton still shutting down, will respawn on next sync");
             } else if !should_run && snap.is_running && !is_cancelling {
                 // Re-acquire and re-verify before cancelling.
-                if let Some(mut entry) = self.singletons.get_mut(&snap.name) {
-                    let singleton = entry.value_mut();
-                    let current_running =
-                        singleton.running.load(std::sync::atomic::Ordering::SeqCst);
-                    if current_running && !singleton.cancel.is_cancelled() {
-                        singleton.cancel.cancel();
+                // If the singleton is managing cancellation, we need to await its handle
+                // to ensure it finishes gracefully before another runner starts a new instance.
+                let (should_cancel, is_managed, handle) =
+                    if let Some(mut entry) = self.singletons.get_mut(&snap.name) {
+                        let singleton = entry.value_mut();
+                        let current_running =
+                            singleton.running.load(std::sync::atomic::Ordering::SeqCst);
+                        if current_running && !singleton.cancel.is_cancelled() {
+                            singleton.cancel.cancel();
+                            let is_managed =
+                                singleton.managed.load(std::sync::atomic::Ordering::Acquire);
+                            let handle = if is_managed { singleton.handle.take() } else { None };
+                            (true, is_managed, handle)
+                        } else {
+                            (false, false, None)
+                        }
+                    } else {
+                        (false, false, None)
+                    };
+
+                if should_cancel {
+                    if is_managed {
+                        if let Some(handle) = handle {
+                            tracing::info!(name = %snap.name, "waiting for managed singleton to shut down gracefully (shard no longer owned)");
+                            // Await the handle - the singleton will observe cancellation and return
+                            let _ = handle.await;
+                            tracing::info!(name = %snap.name, "managed singleton shut down gracefully");
+                        }
+                    } else {
                         tracing::info!(name = %snap.name, "cancelled singleton (shard no longer owned)");
                     }
                 }
@@ -1701,7 +1778,7 @@ impl Sharding for ShardingImpl {
         &self,
         name: &str,
         shard_group: Option<&str>,
-        run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+        run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
     ) -> Result<(), ClusterError> {
         // Serialize with sync_singletons to prevent races.
         // Matches the TS `withSingletonLock` (Sharding.ts).
@@ -1738,6 +1815,7 @@ impl Sharding for ShardingImpl {
         let running = Arc::new(std::sync::atomic::AtomicBool::new(should_run));
         let consecutive_failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let last_failure_ms = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let managed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut handle: Option<tokio::task::JoinHandle<()>> = None;
         if should_run {
             // Shard is owned — spawn now.
@@ -1747,6 +1825,7 @@ impl Sharding for ShardingImpl {
             let running_flag = Arc::clone(&running);
             let failure_count = Arc::clone(&consecutive_failures);
             let failure_time = Arc::clone(&last_failure_ms);
+            let managed_flag = Arc::clone(&managed);
             handle = Some(self.spawn_singleton_task(
                 name_owned,
                 cancel_clone,
@@ -1754,6 +1833,7 @@ impl Sharding for ShardingImpl {
                 running_flag,
                 failure_count,
                 failure_time,
+                managed_flag,
             ));
         }
 
@@ -1767,6 +1847,7 @@ impl Sharding for ShardingImpl {
                 shard_group,
                 consecutive_failures,
                 last_failure_ms,
+                managed,
             },
         );
 
@@ -2636,7 +2717,7 @@ mod tests {
         s.register_singleton(
             "test-singleton",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let tx = tx.clone();
                 Box::pin(async move {
                     if let Some(tx) = tx.lock().unwrap().take() {
@@ -2665,7 +2746,7 @@ mod tests {
         s.register_singleton(
             "long-singleton",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let tx = tx.clone();
                 Box::pin(async move {
                     // This would run forever, but shutdown should cancel it
@@ -3253,7 +3334,7 @@ mod tests {
         s.register_singleton(
             "test-deferred",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let tx = tx.clone();
                 Box::pin(async move {
                     if let Some(tx) = tx.lock().unwrap().take() {
@@ -3315,7 +3396,7 @@ mod tests {
         s.register_singleton(
             "test-cancel",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let tx = tx.clone();
                 Box::pin(async move {
                     // Long-running singleton
@@ -3386,7 +3467,7 @@ mod tests {
         s.register_singleton(
             "panicking-singleton",
             None,
-            Arc::new(|| {
+            Arc::new(|_ctx| {
                 Box::pin(async {
                     panic!("intentional test panic");
                 })
@@ -3415,7 +3496,7 @@ mod tests {
         s.register_singleton(
             "panicking-singleton",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let completed = completed_clone.clone();
                 Box::pin(async move {
                     completed.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3456,16 +3537,20 @@ mod tests {
         .unwrap();
         s.acquire_all_shards().await;
 
-        // Register a singleton that completes immediately with Ok(())
-        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let completed_clone = Arc::clone(&completed);
+        // Register a singleton that manages cancellation and waits for it
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started_clone = Arc::clone(&started);
         s.register_singleton(
             "completing-singleton",
             None,
-            Arc::new(move || {
-                let completed = completed_clone.clone();
+            Arc::new(move |ctx| {
+                let started = started_clone.clone();
                 Box::pin(async move {
-                    completed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    // Opt-in to manage cancellation
+                    let cancel = ctx.cancellation();
+                    started.store(true, std::sync::atomic::Ordering::SeqCst);
+                    // Wait for cancellation
+                    cancel.cancelled().await;
                     Ok(())
                 })
             }),
@@ -3473,23 +3558,23 @@ mod tests {
         .await
         .unwrap();
 
-        // Give the spawned task time to complete
+        // Give the spawned task time to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // The factory should have run
+        // The singleton should have started
         assert!(
-            completed.load(std::sync::atomic::Ordering::SeqCst),
-            "singleton factory should have completed"
+            started.load(std::sync::atomic::Ordering::SeqCst),
+            "singleton should have started"
         );
 
-        // But the running flag should still be true (waiting for cancellation)
+        // The running flag should still be true (waiting for cancellation)
         assert!(
             s.singletons
                 .get("completing-singleton")
                 .unwrap()
                 .running
                 .load(std::sync::atomic::Ordering::SeqCst),
-            "running flag should still be true after normal completion (waiting for cancellation)"
+            "running flag should still be true while singleton manages cancellation"
         );
 
         // Cancel the singleton
@@ -3499,7 +3584,7 @@ mod tests {
             .cancel
             .cancel();
 
-        // Give it time to process cancellation
+        // Give it time to process cancellation gracefully
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Now running should be false
@@ -3509,7 +3594,7 @@ mod tests {
                 .unwrap()
                 .running
                 .load(std::sync::atomic::Ordering::SeqCst),
-            "running flag should be false after cancellation"
+            "running flag should be false after graceful shutdown"
         );
     }
 
@@ -3538,7 +3623,7 @@ mod tests {
         s.register_singleton(
             "custom-group-singleton",
             Some("custom"),
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let e = executed_clone.clone();
                 Box::pin(async move {
                     e.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -4235,7 +4320,7 @@ mod tests {
         s.register_singleton(
             "failing-singleton",
             None,
-            Arc::new(move || {
+            Arc::new(move |_ctx| {
                 let cc = call_count_clone.clone();
                 Box::pin(async move {
                     cc.fetch_add(1, Ordering::SeqCst);

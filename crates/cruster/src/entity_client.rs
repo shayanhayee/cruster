@@ -466,6 +466,7 @@ mod tests {
     use crate::message::ReplyReceiver;
     use crate::reply::{ReplyChunk, ReplyWithExit};
     use crate::sharding::ShardingRegistrationEvent;
+    use crate::singleton::SingletonContext;
     use crate::snowflake::{Snowflake, SnowflakeGenerator};
     use crate::types::ShardId;
     use async_trait::async_trait;
@@ -526,7 +527,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -599,7 +600,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -677,7 +678,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -771,7 +772,7 @@ mod tests {
             &self,
             _name: &str,
             _shard_group: Option<&str>,
-            _run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+            _run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
         ) -> Result<(), ClusterError> {
             Ok(())
         }
@@ -1016,7 +1017,7 @@ mod tests {
                 &self,
                 _: &str,
                 _: Option<&str>,
-                _: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+                _: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
             ) -> Result<(), ClusterError> {
                 Ok(())
             }

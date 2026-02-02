@@ -3,6 +3,7 @@ use crate::entity_client::EntityClient;
 use crate::envelope::{AckChunk, EnvelopeRequest, Interrupt};
 use crate::error::ClusterError;
 use crate::message::ReplyReceiver;
+use crate::singleton::SingletonContext;
 use crate::snowflake::SnowflakeGenerator;
 use crate::types::{EntityId, EntityType, ShardId};
 use async_trait::async_trait;
@@ -48,16 +49,18 @@ pub trait Sharding: Send + Sync {
     ///
     /// The factory is reusable: it will be called each time the singleton needs
     /// to (re)start, e.g. after a shard round-trip during rebalancing.
-    /// Register a singleton that runs on exactly one runner in the cluster.
+    ///
+    /// The factory receives a [`SingletonContext`] containing a cancellation token
+    /// that is triggered when the singleton should shut down gracefully (e.g., when
+    /// the shard moves to another runner or the runner is shutting down).
     ///
     /// `shard_group` specifies the shard group for ownership computation.
     /// Pass `None` to use the default group (`"default"`).
-    /// This matches the TS source (`Sharding.ts:1187`): `options?.shardGroup ?? "default"`.
     async fn register_singleton(
         &self,
         name: &str,
         shard_group: Option<&str>,
-        run: Arc<dyn Fn() -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
+        run: Arc<dyn Fn(SingletonContext) -> BoxFuture<'static, Result<(), ClusterError>> + Send + Sync>,
     ) -> Result<(), ClusterError>;
 
     /// Create a client for an entity type.

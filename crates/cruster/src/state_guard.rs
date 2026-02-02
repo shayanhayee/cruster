@@ -10,20 +10,24 @@
 //! For transactional activities, use `ActivityScope` to wrap activity execution
 //! in a database transaction. State mutations via `self.state` in `#[activity]`
 //! methods automatically write to the active transaction when one exists.
+//!
+//! Activities can also execute arbitrary SQL within the same transaction using
+//! `ActivityScope::sql_transaction()` (requires the `sql` feature).
 
 use arc_swap::ArcSwap;
 use serde::{de::DeserializeOwned, Serialize};
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
-use crate::durable::WorkflowStorage;
+use crate::durable::{StorageTransaction, WorkflowStorage};
 use crate::error::ClusterError;
 
 // Type aliases to reduce complexity warnings
 type PendingWrites = Arc<parking_lot::Mutex<Vec<(String, Vec<u8>)>>>;
 type PendingArcSwaps = Arc<parking_lot::Mutex<Vec<Box<dyn FnOnce() + Send>>>>;
+type SharedTransaction = Arc<TokioMutex<Box<dyn StorageTransaction>>>;
 
 // Thread-local storage for the active transaction context.
 // This allows activity state mutations to automatically write to the transaction.
@@ -38,6 +42,9 @@ struct ActiveTransaction {
     pending_writes: PendingWrites,
     /// Pending ArcSwap updates to apply on commit.
     pending_arc_swaps: PendingArcSwaps,
+    /// The underlying transaction, wrapped for shared access.
+    /// This allows activities to execute SQL within the transaction.
+    transaction: SharedTransaction,
 }
 
 /// Scope for executing an activity within a transaction.
@@ -71,19 +78,25 @@ impl ActivityScope {
     /// If the closure returns `Ok`, the transaction is committed SYNCHRONOUSLY
     /// before this function returns.
     /// If the closure returns `Err` or panics, the transaction is rolled back.
+    ///
+    /// During execution, the activity can:
+    /// - Mutate state via `self.state` (automatically buffered and committed)
+    /// - Execute arbitrary SQL via `ActivityScope::sql_transaction()` (if using SQL storage)
     pub async fn run<F, Fut, T>(storage: &Arc<dyn WorkflowStorage>, f: F) -> Result<T, ClusterError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, ClusterError>>,
     {
         // Begin the transaction
-        let mut tx = storage.begin_transaction().await?;
+        let tx = storage.begin_transaction().await?;
+        let transaction = Arc::new(TokioMutex::new(tx));
         let pending_writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let pending_arc_swaps = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
         let active = ActiveTransaction {
             pending_writes: pending_writes.clone(),
             pending_arc_swaps: pending_arc_swaps.clone(),
+            transaction: transaction.clone(),
         };
 
         // Run the closure with the transaction context
@@ -99,6 +112,14 @@ impl ActivityScope {
                     let mut guard = pending_writes.lock();
                     std::mem::take(&mut *guard)
                 };
+
+                // Take the transaction out of the Arc<Mutex<_>>
+                let mut tx = Arc::try_unwrap(transaction)
+                    .map_err(|_| ClusterError::PersistenceError {
+                        reason: "transaction still in use after activity completed".to_string(),
+                        source: None,
+                    })?
+                    .into_inner();
 
                 // Apply all pending writes to the transaction SYNCHRONOUSLY
                 for (key, bytes) in writes.iter() {
@@ -122,9 +143,12 @@ impl ActivityScope {
                 Ok(value)
             }
             Err(e) => {
-                // Rollback the transaction (pending writes are discarded)
-                let _ = tx.rollback().await; // Ignore rollback errors
-                                             // Don't apply ArcSwap updates on failure - state unchanged
+                // Take the transaction for rollback
+                if let Ok(tx_arc) = Arc::try_unwrap(transaction) {
+                    let tx = tx_arc.into_inner();
+                    let _ = tx.rollback().await; // Ignore rollback errors
+                }
+                // Don't apply ArcSwap updates on failure - state unchanged
                 Err(e)
             }
         }
@@ -170,6 +194,158 @@ impl ActivityScope {
                 updates.push(Box::new(apply));
             }
         });
+    }
+
+    /// Get the underlying SQL transaction for executing arbitrary SQL.
+    ///
+    /// Returns `None` if:
+    /// - Not currently within an activity scope
+    /// - The storage backend doesn't support SQL transactions (e.g., memory storage)
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// #[activity]
+    /// async fn transfer(&mut self, to: String, amount: i64) -> Result<(), ClusterError> {
+    ///     // State mutation (automatically transactional)
+    ///     self.state.balance -= amount;
+    ///     
+    ///     // Execute arbitrary SQL in the same transaction
+    ///     if let Some(tx) = ActivityScope::sql_transaction().await {
+    ///         tx.execute(
+    ///             sqlx::query("INSERT INTO transfers (from_id, to_id, amount) VALUES ($1, $2, $3)")
+    ///                 .bind(&self.id)
+    ///                 .bind(&to)
+    ///                 .bind(amount)
+    ///         ).await?;
+    ///     }
+    ///     
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "sql")]
+    pub async fn sql_transaction() -> Option<SqlTransactionHandle> {
+        let transaction = ACTIVE_TRANSACTION
+            .try_with(|cell| cell.borrow().as_ref().map(|a| a.transaction.clone()))
+            .ok()
+            .flatten()?;
+
+        // Try to downcast to SqlTransaction
+        let mut guard = transaction.lock().await;
+        let is_sql = guard
+            .as_any_mut()
+            .downcast_ref::<crate::storage::sql_workflow::SqlTransaction>()
+            .is_some();
+        drop(guard);
+
+        if is_sql {
+            Some(SqlTransactionHandle { transaction })
+        } else {
+            None
+        }
+    }
+}
+
+/// Handle to the SQL transaction within an activity scope.
+///
+/// This handle provides methods to execute arbitrary SQL within the same
+/// transaction as entity state changes. All SQL operations will be committed
+/// or rolled back together with state mutations.
+#[cfg(feature = "sql")]
+pub struct SqlTransactionHandle {
+    transaction: SharedTransaction,
+}
+
+#[cfg(feature = "sql")]
+impl SqlTransactionHandle {
+    /// Execute a SQL query within the transaction.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// if let Some(tx) = ActivityScope::sql_transaction().await {
+    ///     tx.execute(
+    ///         sqlx::query("INSERT INTO audit_log (entity_id, action) VALUES ($1, $2)")
+    ///             .bind(&entity_id)
+    ///             .bind("transfer")
+    ///     ).await?;
+    /// }
+    /// ```
+    pub async fn execute<'q>(
+        &self,
+        query: sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    ) -> Result<sqlx::postgres::PgQueryResult, ClusterError> {
+        let mut guard = self.transaction.lock().await;
+        let tx = guard
+            .as_any_mut()
+            .downcast_mut::<crate::storage::sql_workflow::SqlTransaction>()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction is not a SQL transaction".to_string(),
+                source: None,
+            })?;
+        tx.execute(query).await
+    }
+
+    /// Fetch a single row from a SQL query within the transaction.
+    ///
+    /// Use with `sqlx::query_as`:
+    /// ```text
+    /// let user: User = tx.fetch_one(sqlx::query_as("SELECT * FROM users WHERE id = $1").bind(id)).await?;
+    /// ```
+    pub async fn fetch_one<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, sqlx::Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<O, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+    {
+        let mut guard = self.transaction.lock().await;
+        let tx = guard
+            .as_any_mut()
+            .downcast_mut::<crate::storage::sql_workflow::SqlTransaction>()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction is not a SQL transaction".to_string(),
+                source: None,
+            })?;
+        tx.fetch_one(query).await
+    }
+
+    /// Fetch an optional row from a SQL query within the transaction.
+    pub async fn fetch_optional<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, sqlx::Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<Option<O>, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+    {
+        let mut guard = self.transaction.lock().await;
+        let tx = guard
+            .as_any_mut()
+            .downcast_mut::<crate::storage::sql_workflow::SqlTransaction>()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction is not a SQL transaction".to_string(),
+                source: None,
+            })?;
+        tx.fetch_optional(query).await
+    }
+
+    /// Fetch all rows from a SQL query within the transaction.
+    pub async fn fetch_all<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, sqlx::Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<Vec<O>, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow>,
+    {
+        let mut guard = self.transaction.lock().await;
+        let tx = guard
+            .as_any_mut()
+            .downcast_mut::<crate::storage::sql_workflow::SqlTransaction>()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction is not a SQL transaction".to_string(),
+                source: None,
+            })?;
+        tx.fetch_all(query).await
     }
 }
 
@@ -604,5 +780,25 @@ mod tests {
 
         // ArcSwap should NOT be updated
         assert_eq!(arc_swap.load().count, 0);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "sql")]
+    async fn sql_transaction_returns_none_for_memory_storage() {
+        let storage: Arc<dyn crate::durable::WorkflowStorage> =
+            Arc::new(MemoryWorkflowStorage::new());
+
+        let result = ActivityScope::run(&storage, || async {
+            // sql_transaction() should return None when using memory storage
+            let tx = ActivityScope::sql_transaction().await;
+            assert!(
+                tx.is_none(),
+                "sql_transaction() should return None for memory storage"
+            );
+            Ok::<_, crate::error::ClusterError>(())
+        })
+        .await;
+
+        assert!(result.is_ok());
     }
 }

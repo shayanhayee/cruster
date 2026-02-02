@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,6 +82,21 @@ pub trait StorageTransaction: Send + Sync {
 
     /// Rollback the transaction, discarding all operations.
     async fn rollback(self: Box<Self>) -> Result<(), ClusterError>;
+
+    /// Returns self as `Any` for downcasting to concrete transaction types.
+    ///
+    /// This enables activities to access the underlying database transaction
+    /// (e.g., `sqlx::Transaction<Postgres>`) for executing arbitrary SQL
+    /// within the same transaction as state changes.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// if let Some(sql_tx) = tx.as_any_mut().downcast_mut::<SqlTransaction>() {
+    ///     sql_tx.execute(sqlx::query("INSERT INTO ...")).await?;
+    /// }
+    /// ```
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// A no-op transaction that commits operations immediately.
@@ -109,6 +125,10 @@ impl StorageTransaction for NoopTransaction {
         // No-op, can't rollback immediate operations
         // This is a limitation of the no-op transaction
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -251,6 +271,10 @@ impl StorageTransaction for MemoryTransaction {
     async fn rollback(self: Box<Self>) -> Result<(), ClusterError> {
         // Just drop the pending operations
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

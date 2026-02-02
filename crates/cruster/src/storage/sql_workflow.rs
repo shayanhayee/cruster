@@ -8,8 +8,9 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::postgres::{PgPool, Postgres};
+use sqlx::postgres::{PgPool, PgQueryResult, PgRow, Postgres};
 use sqlx::{Row, Transaction};
+use std::any::Any;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -321,6 +322,131 @@ impl StorageTransaction for SqlTransaction {
             })?;
 
         Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl SqlTransaction {
+    /// Execute a raw SQL query within this transaction.
+    ///
+    /// This allows activities to run arbitrary SQL statements that will be
+    /// committed or rolled back together with entity state changes.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    /// #[activity]
+    /// async fn transfer(&mut self, to: String, amount: i64) -> Result<(), ClusterError> {
+    ///     self.state.balance -= amount;
+    ///     
+    ///     if let Some(tx) = ActivityScope::sql_transaction().await {
+    ///         tx.execute(
+    ///             sqlx::query("INSERT INTO transfers (from_id, to_id, amount) VALUES ($1, $2, $3)")
+    ///                 .bind(&self.id)
+    ///                 .bind(&to)
+    ///                 .bind(amount)
+    ///         ).await?;
+    ///     }
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn execute<'q>(
+        &self,
+        query: sqlx::query::Query<'q, Postgres, sqlx::postgres::PgArguments>,
+    ) -> Result<PgQueryResult, ClusterError> {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_mut()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction already committed or rolled back".to_string(),
+                source: None,
+            })?;
+
+        query
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| ClusterError::PersistenceError {
+                reason: format!("SQL execute failed: {e}"),
+                source: Some(Box::new(e)),
+            })
+    }
+
+    /// Fetch a single row from a SQL query within this transaction.
+    pub async fn fetch_one<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<O, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_mut()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction already committed or rolled back".to_string(),
+                source: None,
+            })?;
+
+        query
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| ClusterError::PersistenceError {
+                reason: format!("SQL fetch_one failed: {e}"),
+                source: Some(Box::new(e)),
+            })
+    }
+
+    /// Fetch an optional row from a SQL query within this transaction.
+    pub async fn fetch_optional<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<Option<O>, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_mut()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction already committed or rolled back".to_string(),
+                source: None,
+            })?;
+
+        query
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| ClusterError::PersistenceError {
+                reason: format!("SQL fetch_optional failed: {e}"),
+                source: Some(Box::new(e)),
+            })
+    }
+
+    /// Fetch all rows from a SQL query within this transaction.
+    pub async fn fetch_all<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> Result<Vec<O>, ClusterError>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        let mut guard = self.tx.lock().await;
+        let tx = guard
+            .as_mut()
+            .ok_or_else(|| ClusterError::PersistenceError {
+                reason: "transaction already committed or rolled back".to_string(),
+                source: None,
+            })?;
+
+        query
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| ClusterError::PersistenceError {
+                reason: format!("SQL fetch_all failed: {e}"),
+                source: Some(Box::new(e)),
+            })
     }
 }
 

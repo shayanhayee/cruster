@@ -15,11 +15,12 @@ use std::sync::Arc;
 use crate::entities::{
     ActivityRecord, ActivityTestClient, AuditEntry, CancelTimerRequest, ClearFiresRequest,
     ClearMessagesRequest, CounterClient, CrossEntityClient, DecrementRequest, DeleteRequest,
-    GetExecutionRequest, GetRequest, IncrementRequest, KVStoreClient, Message, PendingTimer,
-    PingRequest, ReceiveRequest, ResetPingCountRequest, RunFailingWorkflowRequest,
-    RunLongWorkflowRequest, RunSimpleWorkflowRequest, RunWithActivitiesRequest,
-    ScheduleTimerRequest, SetRequest, SingletonManager, SingletonState, TimerFire, TimerTestClient,
-    TraitTestClient, UpdateRequest, WorkflowExecution, WorkflowTestClient,
+    FailingTransferRequest, GetExecutionRequest, GetRequest, GetSqlCountRequest, IncrementRequest,
+    KVStoreClient, Message, PendingTimer, PingRequest, ReceiveRequest, ResetPingCountRequest,
+    RunFailingWorkflowRequest, RunLongWorkflowRequest, RunSimpleWorkflowRequest,
+    RunWithActivitiesRequest, ScheduleTimerRequest, SetRequest, SingletonManager, SingletonState,
+    SqlActivityTestClient, SqlActivityTestState, TimerFire, TimerTestClient, TraitTestClient,
+    TransferRequest, UpdateRequest, WorkflowExecution, WorkflowTestClient,
 };
 // Import trait client extensions to make trait methods available on TraitTestClient
 use crate::entities::trait_test::{AuditableClientExt, VersionedClientExt};
@@ -40,6 +41,8 @@ pub struct AppState {
     pub timer_test_client: TimerTestClient,
     /// CrossEntity entity client.
     pub cross_entity_client: CrossEntityClient,
+    /// SqlActivityTest entity client.
+    pub sql_activity_test_client: SqlActivityTestClient,
     /// Singleton manager (uses cluster's register_singleton feature).
     pub singleton_manager: Arc<SingletonManager>,
     /// Reference to the sharding implementation for debug endpoints.
@@ -87,6 +90,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // ActivityTest routes
         .route("/activity/:id/run", post(activity_run))
         .route("/activity/:id/log", get(activity_get_log))
+        // SqlActivityTest routes
+        .route("/sql-activity/:id/transfer", post(sql_activity_transfer))
+        .route(
+            "/sql-activity/:id/failing-transfer",
+            post(sql_activity_failing_transfer),
+        )
+        .route("/sql-activity/:id/state", get(sql_activity_get_state))
+        .route(
+            "/sql-activity/:id/sql-count",
+            get(sql_activity_get_sql_count),
+        )
         // TraitTest routes
         .route("/trait/:id", get(trait_get))
         .route("/trait/:id/update", post(trait_update))
@@ -406,6 +420,87 @@ async fn activity_get_log(
         .get_activity_log(&entity_id)
         .await?;
     Ok(Json(log))
+}
+
+// ============================================================================
+// SqlActivityTest handlers
+// ============================================================================
+
+/// Request body for making a transfer.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SqlActivityTransferBody {
+    /// Target entity ID.
+    pub to_entity: String,
+    /// Amount to transfer.
+    pub amount: i64,
+}
+
+/// Make a transfer that records in both state and SQL table.
+async fn sql_activity_transfer(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<SqlActivityTransferBody>,
+) -> Result<Json<i64>, AppError> {
+    let entity_id = EntityId::new(&id);
+    let count = state
+        .sql_activity_test_client
+        .transfer(
+            &entity_id,
+            &TransferRequest {
+                to_entity: body.to_entity,
+                amount: body.amount,
+            },
+        )
+        .await?;
+    Ok(Json(count))
+}
+
+/// Make a transfer that will fail (tests rollback).
+async fn sql_activity_failing_transfer(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<SqlActivityTransferBody>,
+) -> Result<Json<i64>, AppError> {
+    let entity_id = EntityId::new(&id);
+    let count = state
+        .sql_activity_test_client
+        .failing_transfer(
+            &entity_id,
+            &FailingTransferRequest {
+                to_entity: body.to_entity,
+                amount: body.amount,
+            },
+        )
+        .await?;
+    Ok(Json(count))
+}
+
+/// Get the current entity state.
+async fn sql_activity_get_state(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SqlActivityTestState>, AppError> {
+    let entity_id = EntityId::new(&id);
+    let entity_state = state
+        .sql_activity_test_client
+        .get_state(&entity_id)
+        .await?;
+    Ok(Json(entity_state))
+}
+
+/// Get the transfer count from SQL table (verifies SQL writes).
+async fn sql_activity_get_sql_count(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<i64>, AppError> {
+    let entity_id = EntityId::new(&id);
+    // Generate unique query ID to prevent workflow caching
+    let query_id = format!("query-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let count = state
+        .sql_activity_test_client
+        .get_transfer_count_from_sql(&entity_id, &GetSqlCountRequest { query_id })
+        .await?;
+    Ok(Json(count))
 }
 
 // ============================================================================

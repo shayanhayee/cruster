@@ -34,8 +34,8 @@ mod entities;
 
 use api::{create_router, AppState};
 use entities::{
-    ActivityTest, Auditable, Counter, CrossEntity, KVStore, SingletonManager, TimerTest, TraitTest,
-    Versioned, WorkflowTest,
+    ActivityTest, Auditable, Counter, CrossEntity, KVStore, SingletonManager, SqlActivityTest,
+    TimerTest, TraitTest, Versioned, WorkflowTest,
 };
 
 /// Parse a "host:port" string into a RunnerAddress.
@@ -272,6 +272,12 @@ async fn main() -> Result<()> {
         .expect("failed to register CrossEntity entity");
     tracing::info!("Registered CrossEntity entity");
 
+    let sql_activity_test_client = SqlActivityTest
+        .register(sharding.clone())
+        .await
+        .expect("failed to register SqlActivityTest entity");
+    tracing::info!("Registered SqlActivityTest entity");
+
     // Register the singleton using cluster's register_singleton feature
     let singleton_manager = Arc::new(SingletonManager::new(cluster.pool()));
     singleton_manager
@@ -298,6 +304,7 @@ async fn main() -> Result<()> {
         trait_test_client,
         timer_test_client,
         cross_entity_client,
+        sql_activity_test_client,
         singleton_manager,
         sharding,
         shard_groups,
@@ -310,6 +317,7 @@ async fn main() -> Result<()> {
             "TraitTest".to_string(),
             "TimerTest".to_string(),
             "CrossEntity".to_string(),
+            "SqlActivityTest".to_string(),
             "SingletonTest (singleton)".to_string(),
         ],
     });

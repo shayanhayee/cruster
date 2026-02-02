@@ -10,12 +10,14 @@
 //! - `TimerTest` - Timer/scheduling
 //! - `CrossEntity` - Entity-to-entity calls
 //! - `SingletonTest` - Singleton entity behavior
+//! - `SqlActivityTest` - SQL execution within activity transactions
 
 pub mod activity_test;
 pub mod counter;
 pub mod cross_entity;
 pub mod kv_store;
 pub mod singleton_test;
+pub mod sql_activity_test;
 pub mod timer_test;
 pub mod trait_test;
 pub mod workflow_test;
@@ -30,6 +32,10 @@ pub use cross_entity::{
 };
 pub use kv_store::{DeleteRequest, GetRequest, KVStore, KVStoreClient, SetRequest};
 pub use singleton_test::{SingletonManager, SingletonState};
+pub use sql_activity_test::{
+    FailingTransferRequest, GetSqlCountRequest, SqlActivityTest, SqlActivityTestClient,
+    SqlActivityTestState, TransferRequest,
+};
 pub use timer_test::{
     CancelTimerRequest, ClearFiresRequest, PendingTimer, ScheduleTimerRequest, TimerFire,
     TimerTest, TimerTestClient,

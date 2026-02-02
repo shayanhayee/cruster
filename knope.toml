@@ -27,6 +27,7 @@ command = "git checkout -B release origin/main"
 
 [[workflows.steps]]
 type = "PrepareRelease"
+ignore_conventional_commits = true
 
 [[workflows.steps]]
 type = "Command"

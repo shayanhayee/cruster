@@ -199,3 +199,13 @@ jobs:
         run: cargo publish -p cruster --all-features
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      
+      - name: Install knope
+        uses: knope-dev/action@v2.1.0
+        with:
+          version: 0.22.1
+      
+      - name: Create GitHub release and tag
+        run: knope release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

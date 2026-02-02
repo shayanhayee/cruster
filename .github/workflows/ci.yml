@@ -32,6 +32,9 @@ jobs:
     runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -46,6 +49,9 @@ jobs:
     runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -60,6 +66,9 @@ jobs:
     runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -75,6 +84,9 @@ jobs:
     runs-on: [self-hosted, cruster]
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.93"
@@ -171,7 +183,9 @@ jobs:
       contents: write  # Required for creating releases and tags
     steps:
       - uses: actions/checkout@v4
-      
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       

@@ -2329,20 +2329,6 @@ impl Sharding for ShardingImpl {
             }
         }
 
-        // Release all shard locks in storage
-        if let Some(ref runner_storage) = self.runner_storage {
-            if let Err(e) = runner_storage
-                .release_all(&self.config.runner_address)
-                .await
-            {
-                tracing::warn!(error = %e, "failed to release all shard locks during shutdown");
-            }
-        }
-
-        // Clear owned shards
-        self.owned_shards.write().await.clear();
-        self.metrics.shards.set(0);
-
         // Collect resumption task handles.
         let resumption_handles: Vec<_> = self
             .resumption_handles
@@ -2353,7 +2339,8 @@ impl Sharding for ShardingImpl {
             .filter_map(|k| self.resumption_handles.remove(&k).map(|(_, h)| h))
             .collect();
 
-        // Await background tasks, singleton tasks, and resumption tasks with a timeout to ensure clean shutdown.
+        // Wait for background tasks to stop FIRST, before releasing shard locks.
+        // This ensures no concurrent etcd operations from rebalance/refresh loops.
         let handles: Vec<_> = {
             let mut tasks = self.background_tasks.lock().await;
             let mut all = tasks.drain(..).collect::<Vec<_>>();
@@ -2400,6 +2387,21 @@ impl Sharding for ShardingImpl {
                 }
             }
         }
+
+        // Release all shard locks in storage AFTER background tasks have stopped.
+        // This prevents concurrent etcd operations from rebalance/refresh loops.
+        if let Some(ref runner_storage) = self.runner_storage {
+            if let Err(e) = runner_storage
+                .release_all(&self.config.runner_address)
+                .await
+            {
+                tracing::warn!(error = %e, "failed to release all shard locks during shutdown");
+            }
+        }
+
+        // Clear owned shards
+        self.owned_shards.write().await.clear();
+        self.metrics.shards.set(0);
 
         tracing::info!("sharding shut down");
         Ok(())

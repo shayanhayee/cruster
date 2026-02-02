@@ -5,6 +5,7 @@
 [package]
 versioned_files = [
     "Cargo.toml",  # workspace version
+    { path = "Cargo.toml", dependency = "cruster-macros" },  # workspace.dependencies.cruster-macros
     { path = "Cargo.lock", dependency = "cruster" },
 ]
 changelog = "CHANGELOG.md"

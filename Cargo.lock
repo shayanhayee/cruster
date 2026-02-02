@@ -333,7 +333,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chess-cluster"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -416,7 +416,7 @@ checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
 
 [[package]]
 name = "cluster-tests"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "cruster-macros"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "proc-macro2",
  "quote",

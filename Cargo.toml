@@ -18,6 +18,9 @@ keywords = ["distributed", "actor", "cluster", "workflow", "durable"]
 categories = ["asynchronous", "network-programming"]
 
 [workspace.dependencies]
+# Internal crates
+cruster-macros = { path = "crates/cruster-macros", version = "0.0.3" }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"

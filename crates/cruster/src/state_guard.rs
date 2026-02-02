@@ -21,9 +21,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
-use crate::durable::WorkflowStorage;
 #[cfg(feature = "sql")]
 use crate::durable::StorageTransaction;
+use crate::durable::WorkflowStorage;
 use crate::error::ClusterError;
 
 // Type aliases to reduce complexity warnings

@@ -97,6 +97,38 @@ pub struct ShardingConfig {
     /// - `Rendezvous`: Best distribution (each node gets exactly 1/n shards, ±1),
     ///   optimal rebalancing. Recommended for clusters with < 1000 nodes.
     pub shard_assignment_strategy: ShardAssignmentStrategy,
+
+    /// Window before detaching from the cluster after a storage error or keep-alive
+    /// failure. If connectivity is restored within this window, the runner stays
+    /// attached. If not, owned shards are cleared and entities are interrupted.
+    /// Default: 200ms.
+    pub detachment_window: Duration,
+
+    /// Duration of sustained healthy status required before re-attaching to the
+    /// cluster after detachment. The runner must observe healthy keep-alive and
+    /// storage operations for this duration before it can acquire shards again.
+    /// Default: 500ms.
+    pub detachment_recover_window: Duration,
+
+    /// Whether detachment is enabled. When false, storage errors are logged but
+    /// do not trigger detachment. Use this to preserve current behavior during
+    /// rollout. Default: false.
+    pub detachment_enabled: bool,
+
+    /// Number of consecutive keep-alive failures before triggering detachment.
+    /// When the lease keep-alive fails this many times in a row, the runner
+    /// detaches from the cluster to prevent split-brain. Default: 3.
+    pub keepalive_failure_threshold: u32,
+
+    /// Interval between acquire retries for shards held by other runners.
+    /// After the initial acquire_batch, shards that were not acquired due to
+    /// being held elsewhere are retried at this interval. Default: 200ms.
+    pub acquire_retry_interval: Duration,
+
+    /// Maximum duration to retry acquiring shards before giving up for this
+    /// rebalance cycle. Retries continue until either all shards are acquired
+    /// or this window elapses. 0 = no retries (single attempt). Default: 2s.
+    pub acquire_retry_window: Duration,
 }
 
 impl ShardingConfig {
@@ -243,6 +275,12 @@ impl Default for ShardingConfig {
             grpc_connect_timeout: Duration::from_secs(5),
             last_read_guard_interval: Duration::from_secs(600),
             shard_assignment_strategy: ShardAssignmentStrategy::default(),
+            detachment_window: Duration::from_millis(200),
+            detachment_recover_window: Duration::from_millis(500),
+            detachment_enabled: false,
+            keepalive_failure_threshold: 3,
+            acquire_retry_interval: Duration::from_millis(200),
+            acquire_retry_window: Duration::from_secs(2),
         }
     }
 }

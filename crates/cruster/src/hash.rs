@@ -22,6 +22,33 @@ pub fn djb2_hash64_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     hash
 }
 
+/// High-quality 64-bit hash function optimized for uniform distribution.
+///
+/// Based on xxHash64 algorithm, provides excellent avalanche properties
+/// and uniform distribution for rendezvous hashing and similar use cases.
+pub fn hash64(bytes: &[u8]) -> u64 {
+    const PRIME1: u64 = 0x9E3779B185EBCA87;
+    const PRIME2: u64 = 0xC2B2AE3D27D4EB4F;
+    const PRIME3: u64 = 0x165667B19E3779F9;
+    const PRIME5: u64 = 0x27D4EB2F165667C5;
+
+    let mut h: u64 = PRIME5.wrapping_add(bytes.len() as u64);
+
+    // Process bytes
+    for &b in bytes {
+        h ^= (b as u64).wrapping_mul(PRIME5);
+        h = h.rotate_left(11).wrapping_mul(PRIME1);
+    }
+
+    // Final avalanche
+    h ^= h >> 33;
+    h = h.wrapping_mul(PRIME2);
+    h ^= h >> 29;
+    h = h.wrapping_mul(PRIME3);
+    h ^= h >> 32;
+    h
+}
+
 /// Compute the shard index for an entity ID within a group.
 ///
 /// Returns a 0-indexed shard index in `[0, shards_per_group)`.
@@ -112,5 +139,32 @@ mod tests {
             let shard = shard_for_entity(&format!("id-{i}"), 300);
             assert!((0..300).contains(&shard));
         }
+    }
+
+    #[test]
+    fn hash64_deterministic() {
+        let h1 = hash64(b"hello");
+        let h2 = hash64(b"hello");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn hash64_different_inputs_differ() {
+        let h1 = hash64(b"hello");
+        let h2 = hash64(b"world");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash64_avalanche() {
+        // Single bit change should produce very different output
+        let h1 = hash64(b"test0");
+        let h2 = hash64(b"test1");
+        // Count differing bits - should be roughly half (good avalanche)
+        let diff_bits = (h1 ^ h2).count_ones();
+        assert!(
+            diff_bits >= 20,
+            "expected at least 20 differing bits, got {diff_bits}"
+        );
     }
 }

